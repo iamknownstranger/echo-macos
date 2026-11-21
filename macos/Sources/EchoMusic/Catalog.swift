@@ -250,9 +250,11 @@ actor Catalog {
             throw EchoError("This song has no stream that the Mac player can open.")
         }
         let meta = root["videoDetails"]
+        let urlDur = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(Double.init)
+        let resolvedDuration = meta["lengthSeconds"].string.flatMap(Double.init) ?? urlDur
         let track = Track(source: .youtube(videoID), title: meta["title"].string ?? videoID,
                           artist: meta["author"].string ?? "", artwork: meta["thumbnail"]["thumbnails"].nodes.last?["url"].string.flatMap(URL.init(string:)),
-                          duration: meta["lengthSeconds"].string.flatMap(Double.init))
+                          duration: resolvedDuration)
         let bytes = formats.first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)
         return Stream(url: url, track: track, audioByteCount: bytes)
     }
@@ -305,12 +307,14 @@ actor Catalog {
             throw EchoError("This video has no compatible stream that the Mac player can open.")
         }
         let meta = root["videoDetails"]
+        let urlDur = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(Double.init)
+        let resolvedDuration = meta["lengthSeconds"].string.flatMap(Double.init) ?? urlDur
         let track = Track(
             source: .youtube(videoID),
             title: meta["title"].string ?? videoID,
             artist: meta["author"].string ?? "",
             artwork: meta["thumbnail"]["thumbnails"].nodes.last?["url"].string.flatMap(URL.init(string:)),
-            duration: meta["lengthSeconds"].string.flatMap(Double.init),
+            duration: resolvedDuration,
             playbackSource: .youtube(videoID)
         )
         let bytes = videoFormats.first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)

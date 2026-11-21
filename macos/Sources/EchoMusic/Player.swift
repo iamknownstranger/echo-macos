@@ -145,9 +145,10 @@ final class Player: ObservableObject {
                 guard let self, self.engine.currentItem != nil else { return }
                 let time = self.engine.currentTime().seconds
                 if time.isFinite {
-                    self.head.seconds = max(0, time)
+                    let clamped = self.duration > 0 ? min(max(0, time), self.duration) : max(0, time)
+                    self.head.seconds = clamped
                     if let track = self.current {
-                        PlaybackTracker.shared.timeDidUpdate(to: max(0, time), track: track)
+                        PlaybackTracker.shared.timeDidUpdate(to: clamped, track: track)
                     }
                 }
             }
@@ -226,6 +227,7 @@ final class Player: ObservableObject {
                         throw EchoError("The file could not be opened. If it moved, import it from its new location.")
                     }
                     url = file
+                    if let d = track.duration, d > 0 { duration = d }
                 case .youtube(let id):
                     if let file = offlineURL(track) {
                         url = file
@@ -233,22 +235,42 @@ final class Player: ObservableObject {
                     }
                     if isVideoMode {
                         let stream = try await Catalog.shared.videoStream(for: id)
+                        try Task.checkCancellation()
+                        guard generation == ticket else { return }
                         url = stream.url
+                        if let index, queue.indices.contains(index) {
+                            if queue[index].duration == nil { queue[index].duration = stream.track.duration }
+                            if queue[index].artwork == nil { queue[index].artwork = stream.track.artwork }
+                            if track.title == id { queue[index].title = stream.track.title }
+                            if queue[index].artist.isEmpty { queue[index].artist = stream.track.artist }
+                        }
+                        let d = stream.track.duration ?? track.duration ?? 0
+                        if d > 0 { duration = d }
                     } else {
                         let stream = try await Catalog.shared.stream(for: id)
                         try Task.checkCancellation()
                         guard generation == ticket else { return }
                         url = stream.url
-                        if track.title == id, let index, queue.indices.contains(index) { queue[index] = stream.track }
-                        duration = track.duration ?? stream.track.duration ?? 0
+                        if let index, queue.indices.contains(index) {
+                            if queue[index].duration == nil { queue[index].duration = stream.track.duration }
+                            if queue[index].artwork == nil { queue[index].artwork = stream.track.artwork }
+                            if track.title == id { queue[index].title = stream.track.title }
+                            if queue[index].artist.isEmpty { queue[index].artist = stream.track.artist }
+                        }
+                        let d = stream.track.duration ?? track.duration ?? 0
+                        if d > 0 { duration = d }
                     }
                 default:
                     let stream = try await Catalog.shared.stream(for: track)
                     try Task.checkCancellation()
                     guard generation == ticket else { return }
                     url = stream.url
-                    if let index, queue.indices.contains(index) { queue[index] = stream.track }
-                    duration = track.duration ?? stream.track.duration ?? 0
+                    if let index, queue.indices.contains(index) {
+                        if queue[index].duration == nil { queue[index].duration = stream.track.duration }
+                        if queue[index].artwork == nil { queue[index].artwork = stream.track.artwork }
+                    }
+                    let d = stream.track.duration ?? track.duration ?? 0
+                    if d > 0 { duration = d }
                 }
                 guard generation == ticket, !Task.isCancelled else { return }
                 load(AVPlayerItem(url: url), ticket: ticket)
@@ -269,7 +291,25 @@ final class Player: ObservableObject {
                 case .readyToPlay:
                     self.loading = false
                     let length = item.duration.seconds
-                    if length.isFinite && length > 0 { self.duration = length }
+                    if self.duration <= 0 {
+                        if let url = (item.asset as? AVURLAsset)?.url,
+                           let durParam = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "dur" })?.value,
+                           let dur = Double(durParam), dur > 0 {
+                            self.duration = dur
+                        } else if length.isFinite && length > 0 {
+                            self.duration = length
+                        }
+                    } else if length.isFinite && length > 0 {
+                        // Protect against AVPlayerItem container timescale doubling bug on fragmented MP4 YouTube streams:
+                        // Only adopt length if it is reasonably close to authoritative metadata duration (sub-second adjustment).
+                        // Never overwrite if length is ~2x doubled or significantly diverges from authoritative metadata.
+                        if abs(length - self.duration) <= 2.0 {
+                            self.duration = length
+                        }
+                    }
+                    if let index = self.index, self.queue.indices.contains(index), self.queue[index].duration == nil {
+                        self.queue[index].duration = self.duration
+                    }
                     if self.wantsPlayback { self.engine.play() }
                     self.updateSystemState()
                     self.roomPlayback?.playerStatusChanged()
@@ -316,6 +356,9 @@ final class Player: ObservableObject {
                 loading = true
                 let streamObj = toVideo ? try await Catalog.shared.videoStream(for: id) : try await Catalog.shared.stream(for: id)
                 let item = AVPlayerItem(url: streamObj.url)
+                if let dur = streamObj.track.duration ?? current.duration, dur > 0 {
+                    duration = dur
+                }
                 load(item, ticket: generation)
                 engine.seek(to: CMTime(seconds: savedTime, preferredTimescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     Task { @MainActor in

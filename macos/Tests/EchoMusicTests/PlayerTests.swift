@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Testing
 @testable import EchoMusic
 
@@ -33,5 +34,30 @@ import Testing
         timer.cancel()
         #expect(timer.activeMode == .off)
         #expect(timer.remainingSeconds == nil)
+    }
+
+    @MainActor
+    @Test func playerDurationRespectsAuthoritativeMetadata() async throws {
+        let player = Player(systemControls: false)
+        // Simulate a track clicked from Discover shelf without initial duration
+        let track = Track(source: .youtube("i1o1p_DD6TU"), title: "Gehra Hua", artist: "Shashwat Sachdev")
+        #expect(track.duration == nil)
+        
+        player.play([track], at: 0)
+        
+        // Wait for stream resolution and AVPlayerItem readyToPlay
+        let start = Date()
+        while (player.loading || player.duration <= 0) && Date().timeIntervalSince(start) < 15.0 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        
+        #expect(player.loading == false)
+        // The authoritative duration is ~362 seconds; AVPlayerItem's timescale bug reports ~724 seconds.
+        #expect(player.duration >= 360.0 && player.duration <= 365.0)
+        #expect(player.duration < 500.0)
+        #expect(player.queue[0].duration != nil)
+        #expect(player.queue[0].duration! >= 360.0 && player.queue[0].duration! <= 365.0)
+        
+        player.pause()
     }
 }
