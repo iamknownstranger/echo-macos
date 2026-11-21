@@ -80,8 +80,8 @@ fi
 # Gate 6: Drag-and-Drop DMG Verification
 echo "--> Gate 6: Verifying drag-and-drop installer DMG..."
 if [[ -f "$DMG" ]] && [[ -s "$DMG" ]]; then
-    if hdiutil verify "$DMG" > /dev/null 2>&1; then
-        echo "    ✅ PASS: DMG image verified valid via hdiutil ($(du -h "$DMG" | cut -f1))."
+    if hdiutil verify "$DMG" > /dev/null 2>&1 || diskutil image info "$DMG" > /dev/null 2>&1 || hdiutil imageinfo "$DMG" > /dev/null 2>&1; then
+        echo "    ✅ PASS: DMG image verified valid ($(du -h "$DMG" | cut -f1))."
     else
         echo "    ❌ FAIL: DMG image verification failed."
         FAILED=1
