@@ -42,12 +42,13 @@ concurrency:
 jobs:
   test:
     name: Run Unit Tests & Verification
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify Swift & Xcode Environment
         run: |
@@ -63,12 +64,13 @@ jobs:
     name: Build & Publish Release
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event.inputs.publish_release == '' || github.event.inputs.publish_release == 'true')
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git Credentials
         run: |
