@@ -95,7 +95,7 @@ final class BrowseModel: ObservableObject {
         }
     }
 
-    func show(_ collection: MusicCollection, more: Bool = false) {
+    func show(_ collection: MusicCollection, more: Bool = false, autoPlay: Bool = false, player: Player? = nil) {
         collectionTask?.cancel()
         section = .collection(collection)
         let token = more ? collectionPage.continuation : nil
@@ -106,12 +106,18 @@ final class BrowseModel: ObservableObject {
             do {
                 let page = try await Catalog.shared.collection(collection.id, continuation: token)
                 try Task.checkCancellation()
-                collectionPage.tracks += page.tracks.map { track in
+                let tracks = page.tracks.map { track in
                     var track = track
                     if track.artwork == nil { track.artwork = collection.artwork }
                     return track
                 }
+                collectionPage.tracks += tracks
                 collectionPage.continuation = page.continuation == token ? nil : page.continuation
+                if autoPlay, let player = player, !tracks.isEmpty {
+                    await MainActor.run {
+                        player.play(tracks, at: 0)
+                    }
+                }
             } catch { if !Task.isCancelled { collectionError = error.localizedDescription } }
             if !Task.isCancelled { collectionBusy = false }
         }

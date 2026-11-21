@@ -812,9 +812,21 @@ struct ChartsView: View {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
-                            Button { browse.show(item) } label: {
+                            Button { browse.show(item, autoPlay: true, player: player) } label: {
                                 CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
                             }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    browse.show(item, autoPlay: true, player: player)
+                                } label: {
+                                    Label("Play Album", systemImage: "play.fill")
+                                }
+                                Button {
+                                    browse.show(item, autoPlay: false)
+                                } label: {
+                                    Label("View Tracks", systemImage: "music.note.list")
+                                }
+                            }
                         case .track(let track):
                             Button {
                                 let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }
@@ -869,9 +881,21 @@ struct MoodsAndGenresView: View {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
-                            Button { browse.show(item) } label: {
+                            Button { browse.show(item, autoPlay: true, player: player) } label: {
                                 CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
                             }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    browse.show(item, autoPlay: true, player: player)
+                                } label: {
+                                    Label("Play Album", systemImage: "play.fill")
+                                }
+                                Button {
+                                    browse.show(item, autoPlay: false)
+                                } label: {
+                                    Label("View Tracks", systemImage: "music.note.list")
+                                }
+                            }
                         case .track(let track):
                             Button {
                                 let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }
@@ -926,9 +950,21 @@ struct NewReleasesView: View {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
-                            Button { browse.show(item) } label: {
+                            Button { browse.show(item, autoPlay: true, player: player) } label: {
                                 CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
                             }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    browse.show(item, autoPlay: true, player: player)
+                                } label: {
+                                    Label("Play Album", systemImage: "play.fill")
+                                }
+                                Button {
+                                    browse.show(item, autoPlay: false)
+                                } label: {
+                                    Label("View Tracks", systemImage: "music.note.list")
+                                }
+                            }
                         case .track(let track):
                             Button {
                                 let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }

@@ -247,6 +247,28 @@ struct Workspace: View {
                 VStack(alignment: .leading, spacing: 6) {
                     heading(item.title)
                     Text(item.subtitle).foregroundStyle(.secondary).lineLimit(2)
+                    HStack(spacing: 10) {
+                        Button {
+                            if !browse.collectionPage.tracks.isEmpty {
+                                player.play(browse.collectionPage.tracks, at: 0)
+                            }
+                        } label: {
+                            Label("Play Album", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(browse.collectionPage.tracks.isEmpty)
+
+                        Button {
+                            if !browse.collectionPage.tracks.isEmpty {
+                                player.play(browse.collectionPage.tracks.shuffled(), at: 0)
+                            }
+                        } label: {
+                            Label("Shuffle", systemImage: "shuffle")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(browse.collectionPage.tracks.isEmpty)
+                    }
+                    .padding(.top, 4)
                 }
             }
             TrackRows(tracks: browse.collectionPage.tracks)
@@ -302,9 +324,21 @@ struct Workspace: View {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
-                            Button { browse.show(item) } label: {
+                            Button { browse.show(item, autoPlay: true, player: player) } label: {
                                 CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
                             }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button {
+                                    browse.show(item, autoPlay: true, player: player)
+                                } label: {
+                                    Label("Play Album", systemImage: "play.fill")
+                                }
+                                Button {
+                                    browse.show(item, autoPlay: false)
+                                } label: {
+                                    Label("View Tracks", systemImage: "music.note.list")
+                                }
+                            }
                         case .track(let track):
                             Button {
                                 let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }

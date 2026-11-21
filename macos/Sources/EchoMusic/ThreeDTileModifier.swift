@@ -5,7 +5,6 @@ struct ThreeDTileModifier: ViewModifier {
     @ViewState private var size: CGSize = CGSize(width: 162, height: 215)
     @ViewState private var offset: CGPoint = .zero
     @ViewState private var isHovered: Bool = false
-    @ViewState private var isPressed: Bool = false
 
     var maxAngle: Double = 10.0
 
@@ -61,7 +60,7 @@ struct ThreeDTileModifier: ViewModifier {
                 axis: (x: 0, y: 1, z: 0),
                 perspective: 0.4
             )
-            .scaleEffect(isPressed ? 0.97 : (isHovered && isActive ? 1.03 : 1.0))
+            .scaleEffect(isHovered && isActive ? 1.03 : 1.0)
             .shadow(
                 color: Color.black.opacity(isHovered && isActive ? 0.30 : 0.12),
                 radius: isHovered && isActive ? 12 : 4,
@@ -70,7 +69,6 @@ struct ThreeDTileModifier: ViewModifier {
             )
             .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.75), value: offset)
             .animation(.easeOut(duration: 0.18), value: isHovered)
-            .animation(.easeInOut(duration: 0.1), value: isPressed)
             .onContinuousHover { phase in
                 guard isActive else {
                     if isHovered { isHovered = false; offset = .zero }
@@ -85,11 +83,6 @@ struct ThreeDTileModifier: ViewModifier {
                     isHovered = false
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isPressed = true }
-                    .onEnded { _ in isPressed = false }
-            )
     }
 }
 
