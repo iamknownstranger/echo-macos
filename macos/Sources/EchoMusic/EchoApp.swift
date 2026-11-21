@@ -17,6 +17,9 @@ struct EchoApp: App {
         _library = StateObject(wrappedValue: store)
         _roomSession = StateObject(wrappedValue: room)
         _player = StateObject(wrappedValue: playback)
+        Task {
+            try? await AudioCache.shared.prune()
+        }
     }
 
     var body: some Scene {

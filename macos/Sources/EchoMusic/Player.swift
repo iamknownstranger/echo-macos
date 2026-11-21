@@ -221,7 +221,9 @@ final class Player: ObservableObject {
         request = Task {
             do {
                 let url: URL
-                switch track.playbackSource ?? track.source {
+                var streamBytes: Int64? = nil
+                let effectiveSource = track.playbackSource ?? track.source
+                switch effectiveSource {
                 case .file(let file):
                     guard FileManager.default.isReadableFile(atPath: file.path) else {
                         throw EchoError("The file could not be opened. If it moved, import it from its new location.")
@@ -231,6 +233,10 @@ final class Player: ObservableObject {
                 case .youtube(let id):
                     if let file = offlineURL(track) {
                         url = file
+                        break
+                    }
+                    if !isVideoMode, let cached = await AudioCache.shared.cachedURL(for: effectiveSource) {
+                        url = cached
                         break
                     }
                     if isVideoMode {
@@ -251,6 +257,7 @@ final class Player: ObservableObject {
                         try Task.checkCancellation()
                         guard generation == ticket else { return }
                         url = stream.url
+                        streamBytes = stream.audioByteCount
                         if let index, queue.indices.contains(index) {
                             if queue[index].duration == nil { queue[index].duration = stream.track.duration }
                             if queue[index].artwork == nil { queue[index].artwork = stream.track.artwork }
@@ -265,6 +272,7 @@ final class Player: ObservableObject {
                     try Task.checkCancellation()
                     guard generation == ticket else { return }
                     url = stream.url
+                    streamBytes = stream.audioByteCount
                     if let index, queue.indices.contains(index) {
                         if queue[index].duration == nil { queue[index].duration = stream.track.duration }
                         if queue[index].artwork == nil { queue[index].artwork = stream.track.artwork }
@@ -273,12 +281,33 @@ final class Player: ObservableObject {
                     if d > 0 { duration = d }
                 }
                 guard generation == ticket, !Task.isCancelled else { return }
-                load(AVPlayerItem(url: url), ticket: ticket)
+                let item = await createPlayerItem(for: url, track: track, streamAudioBytes: streamBytes)
+                load(item, ticket: ticket)
             } catch {
                 guard generation == ticket, !Task.isCancelled else { return }
                 fail(error.localizedDescription)
             }
         }
+    }
+
+    private func createPlayerItem(for url: URL, track: Track, streamAudioBytes: Int64? = nil) async -> AVPlayerItem {
+        if url.isFileURL || isVideoMode {
+            return AVPlayerItem(url: url)
+        }
+        let effectiveSource = track.playbackSource ?? track.source
+        if let cached = await AudioCache.shared.cachedURL(for: effectiveSource) {
+            return AVPlayerItem(url: cached)
+        }
+        if let key = await AudioCache.shared.cacheKey(for: effectiveSource) {
+            let customURL = AudioCacheURL.encode(streamURL: url, key: key)
+            let asset = AVURLAsset(url: customURL)
+            asset.resourceLoader.setDelegate(AudioCacheResourceLoader.shared, queue: AudioCacheResourceLoader.shared.queue)
+            Task {
+                await AudioCache.shared.prefetch(key: key, remoteURL: url, expectedBytes: streamAudioBytes)
+            }
+            return AVPlayerItem(asset: asset)
+        }
+        return AVPlayerItem(url: url)
     }
 
     private func load(_ item: AVPlayerItem, ticket: UUID) {
@@ -375,7 +404,7 @@ final class Player: ObservableObject {
             } else {
                 streamObj = try await Catalog.shared.stream(for: current)
             }
-            let item = AVPlayerItem(url: streamObj.url)
+            let item = await createPlayerItem(for: streamObj.url, track: current, streamAudioBytes: streamObj.audioByteCount)
             if let dur = streamObj.track.duration ?? current.duration, dur > 0 {
                 duration = dur
             }
