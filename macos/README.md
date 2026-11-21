@@ -2,28 +2,37 @@
 
 A native Apple silicon client for Echo Music. Discover and search YouTube Music, play a collection, open a song shared from Echo on Android, or import audio from Finder. The player supports a queue, liked songs, local playlists, offline downloads, timed lyrics, and Listen Together rooms with Android.
 
-## Build and open
+## Build, Package, and Verify
 
 Use an Apple silicon Mac running macOS 14 or later with a Swift 6 toolchain from Xcode or the Command Line Tools. Run these commands from the Echo Music repository root.
 
 ~~~sh
+# 1. Run unit test suite
+./macos/test.sh
+
+# 2. Build release bundle, distribution ZIP, and installer DMG
 ./macos/build.sh
-open "macos/build/Echo Music.app"
+
+# 3. Run automated release gate verification
+./macos/verify_release.sh
 ~~~
 
-The script builds a release executable for arm64, packages the Echo icon and license, verifies the ad-hoc signature, and writes both the app and a ZIP to macos/build. Drag the app into Applications to keep it. This is a local build. Public distribution with Developer ID signing and notarization requires Apple developer credentials.
+The build script compiles a release executable for arm64, packages the Echo icon and license, signs the bundle with Hardened Runtime entitlements, and generates both `Echo-Music-arm64.zip` and `Echo-Music-arm64.dmg` with a drag-and-drop `/Applications` installer link in `macos/build`. Drag the app into Applications to install. Optional Developer ID signing and notarization can be enabled via `CODESIGN_IDENTITY` and `KEYCHAIN_PROFILE` (or `NOTARY_KEY` / `NOTARY_ISSUER`).
 
 ## Subdirectories & Boundaries
 - [Sources](./Sources/README.md): Contains Swift package target source implementations (`CZlib` system compression library bridge and `EchoMusic` application subsystem).
 
 ## Using the player
 
-- **Discover** shows collections and songs from the region’s public YouTube Music home feed. Open a collection to see its songs. Select a song to play it and queue the rows that follow.
-- **Search** accepts song titles, artist names, Echo watch links, YouTube Music watch links, and youtu.be song links. Press Return to submit. Use the song menu to copy an Android-compatible Echo link.
-- **Library** keeps likes, playlists, downloads, and imported file references on this Mac. Use the plus beside Playlists to create one, then use a song’s menu to add it. Download saves a playable audio file when the provider supplies a complete audio stream. Playback prefers the saved file.
-- **On this Mac** imports audio supported by AVFoundation, including MP3, AAC, ALAC, WAV, AIFF, and FLAC. The original stays in place. Finder’s Open With action also starts playback.
-- **Transport** provides previous, play/pause, next, seek, and volume. The queue button opens the track list. The lyrics button looks up the current recording on LRCLIB. Click a timed line to seek to it.
-- **Keyboard** supports Command-F to search, Command-O to import, Command-P for play/pause, and Command-Left/Right for previous/next. Playback also registers with macOS Now Playing and media commands.
+- **Discover & Explore** features Top Charts, Moods & Genres, and New Releases powered by recursive InnerTube shelf parsing with cached discovery endpoints.
+- **Search & MultiSource** accepts song titles, artist names, Echo watch links, YouTube Music links, and Spotify track/playlist links with anonymous token extraction and Odesli ISRC matching.
+- **Library & History** tracks chronological listening history (with continuous playhead thresholding to defend against scrub jumping), play counts, persistent likes, playlists, and atomic backup recovery.
+- **Audio Equalizer & Loudness** provides an 11-preset 5-band parametric equalizer wired via CoreAudio `MTAudioProcessingTap` with soft-knee peak limiting and loudness normalization.
+- **Ambient Screensaver Mode** provides a full-screen minimalist player with blurred dynamic backdrop, large typography, and display sleep suppression (`IOPMAssertionCreateWithName`).
+- **Advanced Lyrics** features waterfall multi-provider fallback, duplicate timestamp CJK romanization/translation pairing, instrumental detection, and per-track ±0.5s timing offset controls.
+- **Listen Together & Multi-Region Failover** provides collaborative listening rooms with Android compatibility, QR code invitations, multi-region relay failover (`metroserverx.meowery.eu`, `us-east.meowery.net`, `metroserver.echo.fun`), and jittered exponential backoff reconnects.
+- **On this Mac** imports audio supported by AVFoundation, including MP3, AAC, ALAC, WAV, AIFF, and FLAC.
+- **Discord Rich Presence** reports live track, artist, album art, and elapsed playback timestamps over local IPC (`$TMPDIR/discord-ipc-0`).
 
 ## Listen Together with Android
 

@@ -168,7 +168,8 @@ struct AmbientPlayerView: View {
                     if let lyrics {
                         switch lyrics {
                         case .synced(let lines):
-                            SyncedLyrics(lines: lines, head: player.head)
+                            let offset = player.current.map { library.lyricOffset(for: $0.id) } ?? 0.0
+                            SyncedLyrics(lines: lines, head: player.head, offset: offset)
                         case .plain(let text):
                             ScrollView {
                                 Text(text)
@@ -177,7 +178,17 @@ struct AmbientPlayerView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         case .instrumental:
-                            Text("Instrumental")
+                            VStack(spacing: 12) {
+                                Image(systemName: "guitars")
+                                    .font(.system(size: 40))
+                                    .foregroundStyle(.white.opacity(0.4))
+                                Text("Instrumental")
+                                    .font(.title2)
+                                    .foregroundStyle(.white.opacity(0.5))
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        case .notFound:
+                            Text("No lyrics available")
                                 .font(.title3)
                                 .foregroundStyle(.white.opacity(0.4))
                         }

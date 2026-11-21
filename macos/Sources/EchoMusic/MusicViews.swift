@@ -278,6 +278,7 @@ struct Scrubber: View {
 
 struct InspectorView: View {
     @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
     let mode: Inspector
     let close: () -> Void
     @ViewState private var lyrics: Lyrics?
@@ -339,9 +340,53 @@ struct InspectorView: View {
                 Button("Try again") { retry += 1 }
             } else if let lyrics {
                 switch lyrics {
-                case .instrumental: Text("Instrumental").foregroundStyle(.secondary)
-                case .plain(let text): ScrollView { Text(text).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
-                case .synced(let lines): SyncedLyrics(lines: lines, head: player.head)
+                case .instrumental:
+                    HStack(spacing: 8) {
+                        Image(systemName: "guitars")
+                            .font(.title2)
+                        Text("Instrumental")
+                            .font(.headline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 16)
+                case .plain(let text):
+                    ScrollView { Text(text).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                case .synced(let lines):
+                    if let track = player.current {
+                        let offset = library.lyricOffset(for: track.id)
+                        HStack(spacing: 6) {
+                            Text("Offset:")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Button("-0.5s") {
+                                library.updateTrackOffset(id: track.id, offset: offset - 0.5)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            Text(String(format: "%+.1fs", offset))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(offset == 0 ? .secondary : .primary)
+                            Button("+0.5s") {
+                                library.updateTrackOffset(id: track.id, offset: offset + 0.5)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            if offset != 0 {
+                                Button("Reset") {
+                                    library.updateTrackOffset(id: track.id, offset: 0.0)
+                                }
+                                .buttonStyle(.borderless)
+                                .controlSize(.mini)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.bottom, 6)
+                        SyncedLyrics(lines: lines, head: player.head, offset: offset)
+                    } else {
+                        SyncedLyrics(lines: lines, head: player.head)
+                    }
+                case .notFound:
+                    Text("No lyrics were found for this recording.").foregroundStyle(.secondary)
                 }
             } else { ProgressView("Finding lyrics…").controlSize(.small) }
             Spacer(minLength: 0)
@@ -366,17 +411,28 @@ struct SyncedLyrics: View {
     @EnvironmentObject private var player: Player
     let lines: [LyricLine]
     @ObservedObject var head: Playhead
+    var offset: Double = 0.0
+
     var body: some View {
-        let active = lines.lastIndex { $0.time <= head.seconds }
+        let active = lines.lastIndex { $0.adjustedTimestamp(offset: offset) <= head.seconds }
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(lines.indices, id: \.self) { index in
-                        Button { player.seek(lines[index].time) } label: {
-                            Text(lines[index].text.isEmpty ? "♪" : lines[index].text)
-                                .font(.body.weight(index == active ? .bold : .regular))
-                                .foregroundStyle(index == active ? .primary : .secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        let line = lines[index]
+                        Button { player.seek(line.adjustedTimestamp(offset: offset)) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(line.text.isEmpty ? "♪" : line.text)
+                                    .font(.body.weight(index == active ? .bold : .regular))
+                                    .foregroundStyle(index == active ? .primary : .secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if let translation = line.translation, !translation.isEmpty {
+                                    Text(translation)
+                                        .font(.caption)
+                                        .foregroundStyle(index == active ? Color.secondary : Color.secondary.opacity(0.7))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
                         }.buttonStyle(.plain).id(index)
                     }
                 }

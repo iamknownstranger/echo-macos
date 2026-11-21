@@ -100,7 +100,12 @@ enum RoomPlaybackEvent {
 }
 
 @MainActor final class RoomSession: ObservableObject {
-    nonisolated static let defaultServerURL = "wss://metroserverx.meowery.eu/ws"
+    nonisolated static let defaultRelays: [String] = [
+        "wss://metroserverx.meowery.eu/ws",
+        "wss://us-east.meowery.net/ws",
+        "wss://metroserver.echo.fun/ws"
+    ]
+    nonisolated static let defaultServerURL = defaultRelays[0]
     @Published private(set) var state: RoomState?
     @Published private(set) var role: RoomRole = .none
     @Published private(set) var connection: RoomConnection = .disconnected
@@ -118,6 +123,8 @@ enum RoomPlaybackEvent {
     private var pingTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private(set) var serverURL = defaultServerURL
+    private(set) var currentRelayIndex = 0
+    private(set) var consecutiveFailures = 0
     private var username = ""
     private var roomCode: String?
     private var token: String?
@@ -202,19 +209,45 @@ enum RoomPlaybackEvent {
         pending = command
         connect()
     }
-    func leave() {
-        if socket != nil { send("leave_room") }
+    func rotateRelay() {
+        currentRelayIndex = (currentRelayIndex + 1) % Self.defaultRelays.count
+        serverURL = Self.defaultRelays[currentRelayIndex]
+        consecutiveFailures = 0
+        retries = 0
+    }
+
+    nonisolated static func calculateBackoffDelay(attempt: Int, jitter: Double = 0.0) -> Double {
+        let baseDelay = min(pow(2.0, Double(min(max(0, attempt), 4))), 15.0)
+        return baseDelay + jitter
+    }
+
+    func simulateConnectionDrop(error: Error = EchoError("Simulated socket drop")) {
+        if token == nil && pending == nil {
+            pending = ("reconnect_test", [:])
+        }
+        disconnected(error)
+    }
+
+    private func teardownSocket() {
         generation += 1
         receiveTask?.cancel()
+        receiveTask = nil
         pingTask?.cancel()
+        pingTask = nil
         reconnectTask?.cancel()
-        let closingSocket = socket
+        reconnectTask = nil
+        let old = socket
+        socket = nil
+        old?.cancel(with: .goingAway, reason: nil)
+    }
+
+    func leave() {
+        if socket != nil { send("leave_room") }
+        teardownSocket()
         let finalSend = sendTask
         Task {
             await finalSend?.value
-            closingSocket?.cancel(with: .normalClosure, reason: nil)
         }
-        socket = nil
         sendTask = nil
         token = nil
         roomCode = nil
@@ -230,6 +263,7 @@ enum RoomPlaybackEvent {
         connection = .disconnected
         errorMessage = nil
         retries = 0
+        consecutiveFailures = 0
         if let activity = appNapActivity {
             ProcessInfo.processInfo.endActivity(activity)
             appNapActivity = nil
@@ -295,6 +329,8 @@ enum RoomPlaybackEvent {
     private func finishConnecting() {
         guard connection == .connecting || connection == .reconnecting else { return }
         connection = .connected
+        consecutiveFailures = 0
+        retries = 0
         if appNapActivity == nil {
             appNapActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiatedAllowingIdleSystemSleep],
@@ -306,11 +342,11 @@ enum RoomPlaybackEvent {
             send(pending.0, pending.1)
         } else if let token {
             send("reconnect", ["session_token": token])
+            send("get_room_state", ["room_code": roomCode ?? ""])
         }
     }
     private func disconnected(_ error: Error) {
-        pingTask?.cancel()
-        socket = nil
+        teardownSocket()
         isAttached = false
         guard token != nil || pending != nil else {
             connection = .error
@@ -320,6 +356,13 @@ enum RoomPlaybackEvent {
             return
         }
         retries += 1
+        consecutiveFailures += 1
+
+        // Multi-Region Failover: If 3 consecutive failures occur, rotate to next regional relay
+        if consecutiveFailures >= 3 {
+            rotateRelay()
+        }
+
         guard retries <= 15 else {
             connection = .error
             joinPending = false
@@ -328,9 +371,9 @@ enum RoomPlaybackEvent {
             return
         }
         connection = .reconnecting
-        let delay = min(120.0, pow(2.0, Double(min(retries - 1, 7))))
+        let totalDelay = Self.calculateBackoffDelay(attempt: retries - 1, jitter: Double.random(in: 0...0.5))
         reconnectTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            try? await Task.sleep(nanoseconds: UInt64(totalDelay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.connect()
         }

@@ -16,6 +16,7 @@ struct LibraryData: Codable {
     var downloads: [Track] = []
     var history: [HistoryEntry] = []
     var playCounts: [String: Int] = [:]
+    var lyricOffsets: [String: Double] = [:]
 
     init() {}
 
@@ -27,6 +28,7 @@ struct LibraryData: Codable {
         downloads = try box.decodeIfPresent([Track].self, forKey: .downloads) ?? []
         history = try box.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
         playCounts = try box.decodeIfPresent([String: Int].self, forKey: .playCounts) ?? [:]
+        lyricOffsets = try box.decodeIfPresent([String: Double].self, forKey: .lyricOffsets) ?? [:]
     }
 }
 
@@ -123,6 +125,20 @@ final class Library: ObservableObject {
 
     func playCount(for track: Track) -> Int {
         data.playCounts[track.id, default: 0]
+    }
+
+    func lyricOffset(for trackId: String) -> Double {
+        data.lyricOffsets[trackId] ?? 0.0
+    }
+
+    func updateTrackOffset(id: String, offset: Double) {
+        update {
+            if offset == 0.0 {
+                $0.lyricOffsets.removeValue(forKey: id)
+            } else {
+                $0.lyricOffsets[id] = offset
+            }
+        }
     }
 
     @discardableResult
