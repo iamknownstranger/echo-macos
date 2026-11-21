@@ -27,7 +27,7 @@ fi
 # Gate 2: App Bundle & Binary Architecture
 echo "--> Gate 2: Verifying application bundle & Apple silicon arm64 architecture..."
 if [[ -d "$APP" ]] && [[ -f "$BIN" ]]; then
-    if lipo -verify_arch arm64 "$BIN"; then
+    if lipo "$BIN" -verify_arch arm64; then
         echo "    ✅ PASS: Binary architecture confirmed as native arm64."
     else
         echo "    ❌ FAIL: Binary is not arm64."

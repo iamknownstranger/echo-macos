@@ -45,7 +45,7 @@ else
 fi
 
 codesign --verify --deep --strict "$app"
-lipo -verify_arch arm64 "$app/Contents/MacOS/EchoMusic"
+lipo "$app/Contents/MacOS/EchoMusic" -verify_arch arm64
 
 echo "==> Creating distribution ZIP..."
 ditto -c -k --keepParent "$app" "$stage/Echo-Music-arm64.zip"
