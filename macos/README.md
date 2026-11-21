@@ -13,6 +13,9 @@ open "macos/build/Echo Music.app"
 
 The script builds a release executable for arm64, packages the Echo icon and license, verifies the ad-hoc signature, and writes both the app and a ZIP to macos/build. Drag the app into Applications to keep it. This is a local build. Public distribution with Developer ID signing and notarization requires Apple developer credentials.
 
+## Subdirectories & Boundaries
+- [Sources](./Sources/README.md): Contains Swift package target source implementations (`CZlib` system compression library bridge and `EchoMusic` application subsystem).
+
 ## Using the player
 
 - **Discover** shows collections and songs from the region’s public YouTube Music home feed. Open a collection to see its songs. Select a song to play it and queue the rows that follow.

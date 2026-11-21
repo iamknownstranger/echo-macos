@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+import Network
+import AppKit
 
 struct RoomTrack: Codable, Equatable {
     var id: String
@@ -129,6 +131,58 @@ enum RoomPlaybackEvent {
     private var retries = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var appNapActivity: NSObjectProtocol?
+    private var pathMonitor: NWPathMonitor?
+    private var wakeObserver: NSObjectProtocol?
+    private var awaitingNetworkWake = false
+
+    init() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                if path.status == .satisfied && self.awaitingNetworkWake {
+                    self.awaitingNetworkWake = false
+                    if self.role != .none && self.connection != .connected {
+                        self.reconnectTask?.cancel()
+                        self.connect()
+                    }
+                }
+            }
+        }
+        monitor.start(queue: .global(qos: .utility))
+        self.pathMonitor = monitor
+
+        self.wakeObserver = NotificationCenter.default.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleWakeFromSleep()
+            }
+        }
+    }
+
+    deinit {
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+        }
+        if let wakeObserver {
+            NotificationCenter.default.removeObserver(wakeObserver)
+        }
+        pathMonitor?.cancel()
+    }
+
+    private func handleWakeFromSleep() {
+        guard role != .none, connection != .disconnected else { return }
+        if pathMonitor?.currentPath.status == .satisfied {
+            reconnectTask?.cancel()
+            connect()
+        } else {
+            awaitingNetworkWake = true
+        }
+    }
 
     func create(username: String, serverURL: String = RoomSession.defaultServerURL) {
         start(username: username, serverURL: serverURL, command: ("create_room", ["username": username]))
@@ -176,6 +230,10 @@ enum RoomPlaybackEvent {
         connection = .disconnected
         errorMessage = nil
         retries = 0
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+        }
     }
     private func finishWithError(_ message: String) {
         leave()
@@ -237,6 +295,12 @@ enum RoomPlaybackEvent {
     private func finishConnecting() {
         guard connection == .connecting || connection == .reconnecting else { return }
         connection = .connected
+        if appNapActivity == nil {
+            appNapActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiatedAllowingIdleSystemSleep],
+                reason: "Listen Together Room Sync"
+            )
+        }
         if let pending {
             self.pending = nil
             send(pending.0, pending.1)
@@ -370,6 +434,10 @@ enum RoomPlaybackEvent {
                 roomCode = code
                 role = .host
                 retries = 0
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+        }
                 creationPending = false
                 state = RoomState(
                     roomCode: code, hostId: id,
@@ -396,6 +464,10 @@ enum RoomPlaybackEvent {
                 if decoded.protobuf { room.allowParticipantControl = false }
                 state = room
                 retries = 0
+        if let activity = appNapActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            appNapActivity = nil
+        }
                 isAttached = true
                 joinPending = false
                 onPlayback?(.state(room))

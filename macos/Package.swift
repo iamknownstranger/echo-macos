@@ -7,7 +7,7 @@ let package = Package(
     products: [.executable(name: "EchoMusic", targets: ["EchoMusic"])],
     targets: [
         .systemLibrary(name: "CZlib"),
-        .executableTarget(name: "EchoMusic", dependencies: ["CZlib"], swiftSettings: [.enableUpcomingFeature("BareSlashRegexLiterals")]),
+        .executableTarget(name: "EchoMusic", dependencies: ["CZlib"], exclude: ["README.md"], swiftSettings: [.enableUpcomingFeature("BareSlashRegexLiterals")]),
         .testTarget(name: "EchoMusicTests", dependencies: ["EchoMusic"])
     ]
 )

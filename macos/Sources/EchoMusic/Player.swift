@@ -17,8 +17,12 @@ final class Player: ObservableObject {
     @Published private(set) var failure: String?
     @Published var roomPlaybackIssue: String?
     @Published var volume: Double = 0.8 { didSet { engine.volume = Float(volume) } }
+    @Published var isVideoMode: Bool = false
     let head = Playhead()
+
     private let engine = AVPlayer()
+    var playerEngine: AVPlayer { engine }
+
     private let offlineURL: (Track) -> URL?
     private let systemControls: Bool
     private var timeObserver: Any?
@@ -206,10 +210,11 @@ final class Player: ObservableObject {
         duration = track.duration ?? 0
         updateSystemState()
         if autoplay { roomPlayback?.localTrackChanged() }
+
         request = Task {
             do {
                 let url: URL
-                switch track.source {
+                switch track.playbackSource ?? track.source {
                 case .file(let file):
                     guard FileManager.default.isReadableFile(atPath: file.path) else {
                         throw EchoError("The file could not be opened. If it moved, import it from its new location.")
@@ -220,11 +225,23 @@ final class Player: ObservableObject {
                         url = file
                         break
                     }
-                    let stream = try await Catalog.shared.stream(for: id)
+                    if isVideoMode {
+                        let stream = try await Catalog.shared.videoStream(for: id)
+                        url = stream.url
+                    } else {
+                        let stream = try await Catalog.shared.stream(for: id)
+                        try Task.checkCancellation()
+                        guard generation == ticket else { return }
+                        url = stream.url
+                        if track.title == id, let index, queue.indices.contains(index) { queue[index] = stream.track }
+                        duration = track.duration ?? stream.track.duration ?? 0
+                    }
+                default:
+                    let stream = try await Catalog.shared.stream(for: track)
                     try Task.checkCancellation()
                     guard generation == ticket else { return }
                     url = stream.url
-                    if track.title == id, let index, queue.indices.contains(index) { queue[index] = stream.track }
+                    if let index, queue.indices.contains(index) { queue[index] = stream.track }
                     duration = track.duration ?? stream.track.duration ?? 0
                 }
                 guard generation == ticket, !Task.isCancelled else { return }
@@ -279,6 +296,34 @@ final class Player: ObservableObject {
                 self.fail(message ?? "The stream was interrupted. Try playing this song again.")
             }
         })
+    }
+
+    func switchPlaybackMode(toVideo: Bool) async {
+        guard isVideoMode != toVideo else { return }
+        isVideoMode = toVideo
+        guard let current else { return }
+        if case .youtube(let id) = current.playbackSource ?? current.source {
+            let savedTime = head.seconds
+            let wasPlaying = wantsPlayback
+            do {
+                loading = true
+                let streamObj = toVideo ? try await Catalog.shared.videoStream(for: id) : try await Catalog.shared.stream(for: id)
+                let item = AVPlayerItem(url: streamObj.url)
+                load(item, ticket: generation)
+                engine.seek(to: CMTime(seconds: savedTime, preferredTimescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                    Task { @MainActor in
+                        if wasPlaying { self?.engine.play() }
+                    }
+                }
+            } catch {
+                fail(error.localizedDescription)
+            }
+        }
+    }
+
+    func currentTrackRemainingTime() -> Double? {
+        guard duration > 0 else { return nil }
+        return max(0, duration - head.seconds)
     }
 
     private func fail(_ message: String) {
@@ -363,7 +408,10 @@ final class Player: ObservableObject {
         commands.previousTrackCommand.isEnabled = current != nil
         commands.nextTrackCommand.isEnabled = hasNext
         commands.changePlaybackPositionCommand.isEnabled = duration > 0 && !loading && failure == nil
-        guard let current else { return }
+        guard let current else {
+            Task { await DiscordRPC.shared.clearActivity() }
+            return
+        }
         let info = MPNowPlayingInfoCenter.default()
         let playing = engine.timeControlStatus == .playing
         info.nowPlayingInfo = [
@@ -372,5 +420,14 @@ final class Player: ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0
         ]
         info.playbackState = playing ? .playing : .paused
+
+        Task {
+            await DiscordRPC.shared.updateActivity(
+                track: current,
+                position: head.seconds,
+                duration: duration,
+                isPlaying: playing
+            )
+        }
     }
 }

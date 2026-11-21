@@ -9,7 +9,7 @@ extension Color {
     static let echoAccent = Color(red: 0.88, green: 0.22, blue: 0.23)
 }
 
-enum Inspector { case queue, lyrics }
+enum Inspector { case queue, lyrics, video }
 
 struct Workspace: View {
     @EnvironmentObject private var library: Library
@@ -20,6 +20,7 @@ struct Workspace: View {
     @ViewState private var playlistPrompt = false
     @ViewState private var playlistName = ""
     @ViewState private var playlistToDelete: Playlist?
+    @ViewState private var spotifyImportOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +32,12 @@ struct Workspace: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         if case .collection = browse.section {
+                            Button { browse.section = .discover } label: { Image(systemName: "chevron.left") }
+                                .buttonStyle(.plain).accessibilityLabel("Back to Discover")
+                        } else if case .artist = browse.section {
+                            Button { browse.section = .discover } label: { Image(systemName: "chevron.left") }
+                                .buttonStyle(.plain).accessibilityLabel("Back to Discover")
+                        } else if case .album = browse.section {
                             Button { browse.section = .discover } label: { Image(systemName: "chevron.left") }
                                 .buttonStyle(.plain).accessibilityLabel("Back to Discover")
                         }
@@ -63,7 +70,7 @@ struct Workspace: View {
             Divider()
             Transport(inspector: $inspector)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.ultraThinMaterial)
         .tint(.echoAccent)
         .background {
             Button("Find a song") { browse.section = .search; searchFocused = true }
@@ -90,6 +97,9 @@ struct Workspace: View {
         .alert("Echo Music", isPresented: Binding(get: { library.issue != nil }, set: { if !$0 { library.issue = nil } })) {
             Button("OK") { library.issue = nil }
         } message: { Text(library.issue ?? "") }
+        .sheet(isPresented: $spotifyImportOpen) {
+            SpotifyImportSheet(isPresented: $spotifyImportOpen)
+        }
     }
 
     private var sidebar: some View {
@@ -125,6 +135,10 @@ struct Workspace: View {
                 Label(library.importsInProgress > 0 ? "Importing…" : "Import audio…", systemImage: "plus.circle")
                     .frame(maxWidth: .infinity, alignment: .leading).padding(9)
             }.buttonStyle(.plain).disabled(library.importsInProgress > 0)
+            Button { spotifyImportOpen = true } label: {
+                Label("Import Spotify…", systemImage: "arrow.down.doc")
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(9)
+            }.buttonStyle(.plain)
         }.padding(.horizontal, 10).padding(.bottom, 8)
     }
 
@@ -154,8 +168,20 @@ struct Workspace: View {
     private func submit() {
         let query = browse.query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: query), url.scheme != nil, query.contains("://") {
-            guard let id = SongLink.videoID(url) else { library.issue = "Paste an Echo or YouTube song link, or search by title or artist."; return }
-            player.play([library.track(forVideoID: id)])
+            if let id = SongLink.videoID(url) {
+                player.play([library.track(forVideoID: id)])
+            } else if SpotifySource.parse(url: url) != nil || query.contains("song.link") || query.contains("apple.com") {
+                Task {
+                    do {
+                        let track = try await MultiSourceResolver.shared.resolve(url: url)
+                        player.play([track])
+                    } catch {
+                        library.issue = error.localizedDescription
+                    }
+                }
+            } else {
+                library.issue = "Paste a YouTube, Spotify, Apple Music, or Echo song link, or search by title or artist."
+            }
         } else { browse.search() }
         searchFocused = false
     }
@@ -232,6 +258,10 @@ struct Workspace: View {
                 }
                 TrackRows(tracks: list.tracks, playlist: id)
             }
+        case .artist(let artist):
+            ArtistDetailView(artist: artist)
+        case .album(let album):
+            AlbumDetailView(album: album)
         }
     }
 

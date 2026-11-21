@@ -38,13 +38,24 @@ final class Library: ObservableObject {
     init(file: URL? = nil) {
         self.file = file ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Echo Music/library.json")
+        let backupURL = self.file.deletingPathExtension().appendingPathExtension("bak.json")
         do {
-            data = try JSONDecoder().decode(LibraryData.self, from: Data(contentsOf: self.file))
+            let fileData = try Data(contentsOf: self.file)
+            guard fileData.count > 0 else { throw EchoError("Library file was empty (0 bytes).") }
+            data = try JSONDecoder().decode(LibraryData.self, from: fileData)
         } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
             // The library is created on the first edit.
         } catch {
             canWrite = false
-            issue = "Could not read \(self.file.path). Your existing library has been preserved. \(error.localizedDescription)"
+            if FileManager.default.fileExists(atPath: backupURL.path),
+               let backupData = try? Data(contentsOf: backupURL),
+               backupData.count > 0,
+               let recovered = try? JSONDecoder().decode(LibraryData.self, from: backupData) {
+                self.data = recovered
+                self.issue = "Could not read \(self.file.path), loaded backup. Your existing file has been preserved. \(error.localizedDescription)"
+            } else {
+                issue = "Could not read \(self.file.path). Your existing library has been preserved. \(error.localizedDescription)"
+            }
         }
     }
 
@@ -54,7 +65,13 @@ final class Library: ObservableObject {
         var next = data
         change(&next)
         do {
-            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let dir = file.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: file.path), ((try? Data(contentsOf: file).count) ?? 0) > 0 {
+                let backupURL = file.deletingPathExtension().appendingPathExtension("bak.json")
+                try? FileManager.default.removeItem(at: backupURL)
+                try? FileManager.default.copyItem(at: file, to: backupURL)
+            }
             try JSONEncoder().encode(next).write(to: file, options: .atomic)
             data = next
             return true
@@ -215,5 +232,154 @@ enum LocalAudio {
         return Track(source: .file(url), title: title ?? url.deletingPathExtension().lastPathComponent,
                      artist: artist ?? "", album: album, artwork: artwork,
                      duration: seconds.isFinite && seconds > 0 ? seconds : nil)
+    }
+}
+
+// MARK: - Interchange: CSV & M3U
+
+extension Library {
+    func exportCSV(tracks: [Track]? = nil) -> String {
+        let exportTracks = tracks ?? data.liked
+        var out = "\"Title\",\"Artist\",\"Album\",Duration,URL\n"
+        for t in exportTracks {
+            let title = t.title.replacingOccurrences(of: "\"", with: "\"\"")
+            let artist = t.artist.replacingOccurrences(of: "\"", with: "\"\"")
+            let album = (t.album ?? "").replacingOccurrences(of: "\"", with: "\"\"")
+            let dur = Int(t.duration ?? 0)
+            let url = (t.shareURL?.absoluteString ?? urlString(for: t)).replacingOccurrences(of: "\"", with: "\"\"")
+            out += "\"\(title)\",\"\(artist)\",\"\(album)\",\(dur),\"\(url)\"\n"
+        }
+        return out
+    }
+
+    private func urlString(for track: Track) -> String {
+        switch track.source {
+        case .youtube(let id): return "https://music.youtube.com/watch?v=\(id)"
+        case .spotify(let id): return "https://open.spotify.com/track/\(id)"
+        case .file(let url): return url.absoluteString
+        case .apple(let id): return "https://music.apple.com/song/\(id)"
+        case .tidal(let id): return "https://tidal.com/browse/track/\(id)"
+        case .deezer(let id): return "https://deezer.com/track/\(id)"
+        }
+    }
+
+    @discardableResult
+    func importCSV(_ text: String, intoPlaylistNamed name: String? = nil) -> [Track] {
+        var imported: [Track] = []
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.starts(with: "\"Title\"") || trimmed.starts(with: "Title,") { continue }
+
+            let fields = parseCSVLine(trimmed)
+            guard fields.count >= 5 else { continue }
+            let title = fields[0]
+            let artist = fields[1]
+            let album = fields[2].isEmpty ? nil : fields[2]
+            let duration = Double(fields[3])
+            let rawURL = fields[4]
+
+            let track: Track
+            if let url = URL(string: rawURL), let videoID = SongLink.videoID(url) {
+                track = Track(source: .youtube(videoID), title: title, artist: artist, album: album, duration: duration)
+            } else if let url = URL(string: rawURL), let spotify = SpotifySource.parse(url: url), spotify.type == "track" {
+                track = Track(source: .spotify(spotify.id), title: title, artist: artist, album: album, duration: duration)
+            } else if rawURL.starts(with: "file://"), let fileURL = URL(string: rawURL) {
+                track = Track(source: .file(fileURL), title: title, artist: artist, album: album, duration: duration)
+            } else {
+                track = Track(source: .youtube(rawURL), title: title, artist: artist, album: album, duration: duration)
+            }
+            imported.append(track)
+        }
+
+        guard !imported.isEmpty else { return [] }
+        if let name, let playlistID = newPlaylist(name) {
+            for t in imported { add(t, to: playlistID) }
+        } else {
+            update {
+                for t in imported {
+                    if !$0.liked.contains(where: { $0.id == t.id }) {
+                        $0.liked.append(t)
+                    }
+                }
+            }
+        }
+        return imported
+    }
+
+    private func parseCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
+        var iterator = line.makeIterator()
+        while let ch = iterator.next() {
+            if ch == "\"" {
+                inQuotes.toggle()
+            } else if ch == "," && !inQuotes {
+                fields.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        fields.append(current)
+        return fields
+    }
+
+    func exportM3U(tracks: [Track]) -> String {
+        var out = "#EXTM3U\n"
+        for t in tracks {
+            let dur = Int(t.duration ?? 0)
+            out += "#EXTINF:\(dur),\(t.artist) - \(t.title)\n"
+            out += "\(urlString(for: t))\n"
+        }
+        return out
+    }
+
+    @discardableResult
+    func importM3U(_ text: String, playlistName: String) -> [Track] {
+        var tracks: [Track] = []
+        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        var currentTitle = ""
+        var currentArtist = ""
+        var currentDuration: Double? = nil
+
+        for line in lines {
+            if line.starts(with: "#EXTINF:") {
+                let stripped = String(line.dropFirst(8))
+                let parts = stripped.split(separator: ",", maxSplits: 1).map(String.init)
+                if let durStr = parts.first, let d = Double(durStr) { currentDuration = d }
+                if parts.count == 2 {
+                    let titleParts = parts[1].split(separator: "-", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                    if titleParts.count == 2 {
+                        currentArtist = titleParts[0]
+                        currentTitle = titleParts[1]
+                    } else {
+                        currentTitle = parts[1]
+                    }
+                }
+            } else if !line.isEmpty && !line.starts(with: "#") {
+                let track: Track
+                if let url = URL(string: line), let videoID = SongLink.videoID(url) {
+                    track = Track(source: .youtube(videoID), title: currentTitle.isEmpty ? videoID : currentTitle, artist: currentArtist, duration: currentDuration)
+                } else if let url = URL(string: line), let spotify = SpotifySource.parse(url: url), spotify.type == "track" {
+                    track = Track(source: .spotify(spotify.id), title: currentTitle.isEmpty ? spotify.id : currentTitle, artist: currentArtist, duration: currentDuration)
+                } else if line.starts(with: "file://"), let fileURL = URL(string: line) {
+                    track = Track(source: .file(fileURL), title: currentTitle.isEmpty ? fileURL.lastPathComponent : currentTitle, artist: currentArtist, duration: currentDuration)
+                } else {
+                    track = Track(source: .youtube(line), title: currentTitle.isEmpty ? line : currentTitle, artist: currentArtist, duration: currentDuration)
+                }
+                tracks.append(track)
+                currentTitle = ""
+                currentArtist = ""
+                currentDuration = nil
+            }
+        }
+
+        if !tracks.isEmpty, let playlistID = newPlaylist(playlistName) {
+            for t in tracks { add(t, to: playlistID) }
+        }
+        return tracks
     }
 }

@@ -168,7 +168,6 @@ actor Catalog {
     func stream(for videoID: String) async throws -> Stream {
         guard SongLink.validID(videoID) else { throw EchoError("This song link is invalid.") }
         if visitor == nil {
-            // Direct links and saved songs can be the first request after a cold start.
             _ = try await request("browse", body: ["browseId": "FEmusic_home"])
         }
         let root = try await request("player", body: ["videoId": videoID], player: true)
@@ -190,5 +189,127 @@ actor Catalog {
                           duration: meta["lengthSeconds"].string.flatMap(Double.init))
         let bytes = formats.first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)
         return Stream(url: url, track: track, audioByteCount: bytes)
+    }
+
+    /// Resolves stream for arbitrary Track, dispatching to MultiSourceResolver if needed.
+    func stream(for track: Track) async throws -> Stream {
+        let effectiveSource = track.playbackSource ?? track.source
+        switch effectiveSource {
+        case .youtube(let id):
+            return try await stream(for: id)
+        case .file(let file):
+            guard FileManager.default.isReadableFile(atPath: file.path) else {
+                throw EchoError("The file could not be opened: \(file.lastPathComponent)")
+            }
+            return Stream(url: file, track: track, audioByteCount: nil)
+        default:
+            let matched = try await MultiSourceResolver.shared.matchToYouTube(track: track)
+            if case .youtube(let id) = matched.playbackSource {
+                let streamObj = try await stream(for: id)
+                var updatedTrack = track
+                updatedTrack.playbackSource = .youtube(id)
+                if updatedTrack.artwork == nil { updatedTrack.artwork = streamObj.track.artwork }
+                if updatedTrack.duration == nil { updatedTrack.duration = streamObj.track.duration }
+                return Stream(url: streamObj.url, track: updatedTrack, audioByteCount: streamObj.audioByteCount)
+            }
+            throw EchoError("Could not resolve playable stream for \(track.title)")
+        }
+    }
+
+    /// Resolves high-definition video stream for YouTube video ID with macOS AVPlayer / PiP support.
+    func videoStream(for videoID: String) async throws -> Stream {
+        guard SongLink.validID(videoID) else { throw EchoError("This video link is invalid.") }
+        if visitor == nil {
+            _ = try await request("browse", body: ["browseId": "FEmusic_home"])
+        }
+        let root = try await request("player", body: ["videoId": videoID], player: true)
+        let status = root["playabilityStatus"]
+        guard status["status"].string == "OK" else {
+            throw EchoError(status["reason"].string ?? "This video is unavailable from YouTube.")
+        }
+        let media = root["streamingData"]
+        let allFormats = media["formats"].nodes + media["adaptiveFormats"].nodes
+        let videoFormats = allFormats.filter {
+            let mime = $0["mimeType"].string ?? ""
+            return mime.contains("video/mp4") && $0["url"].string != nil
+        }.sorted { ($0["bitrate"].value as? Int ?? 0) > ($1["bitrate"].value as? Int ?? 0) }
+
+        let urls = videoFormats.compactMap { $0["url"].string } + [media["hlsManifestUrl"].string].compactMap { $0 }
+        guard let url = urls.compactMap(URL.init(string:)).first(where: { $0.scheme == "https" }) else {
+            throw EchoError("This video has no compatible stream that the Mac player can open.")
+        }
+        let meta = root["videoDetails"]
+        let track = Track(
+            source: .youtube(videoID),
+            title: meta["title"].string ?? videoID,
+            artist: meta["author"].string ?? "",
+            artwork: meta["thumbnail"]["thumbnails"].nodes.last?["url"].string.flatMap(URL.init(string:)),
+            duration: meta["lengthSeconds"].string.flatMap(Double.init),
+            playbackSource: .youtube(videoID)
+        )
+        let bytes = videoFormats.first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)
+        return Stream(url: url, track: track, audioByteCount: bytes)
+    }
+
+    /// Fetches artist information, discography albums, and singles from YouTube Music.
+    func artist(id: String) async throws -> Artist {
+        let root = try await request("browse", body: ["browseId": id])
+        let header = root["header"]["musicImmersiveHeaderRenderer"]
+        let name = header["title"].label
+        let thumbnail = header["thumbnail"].image
+        let bio = header["description"].label
+
+        var albums: [Album] = []
+        var singles: [Track] = []
+
+        let sections = root["contents"]["singleColumnBrowseResultsRenderer"].sectionList
+        for section in sections {
+            let shelf = section["musicCarouselShelfRenderer"]
+            let title = shelf["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"].label.lowercased()
+            if title.contains("album") {
+                for item in shelf["contents"].nodes {
+                    let row = item["musicTwoRowItemRenderer"]
+                    let albumTitle = row["title"].label
+                    let albumID = row["navigationEndpoint"]["browseEndpoint"]["browseId"].string ?? ""
+                    let cover = row["thumbnailRenderer"].image
+                    let subtitle = row["subtitle"].label
+                    albums.append(Album(id: albumID, title: albumTitle, artist: name, coverURL: cover, year: subtitle))
+                }
+            } else if title.contains("single") || title.contains("top song") {
+                for item in shelf["contents"].nodes {
+                    if let track = CatalogParser.song(item["musicResponsiveListItemRenderer"]) {
+                        singles.append(track)
+                    }
+                }
+            }
+        }
+
+        return Artist(
+            id: id,
+            name: name.isEmpty ? "Artist" : name,
+            thumbnailURL: thumbnail,
+            bio: bio.isEmpty ? nil : bio,
+            albums: albums,
+            singles: singles
+        )
+    }
+
+    /// Fetches album tracks and metadata from YouTube Music.
+    func album(id: String) async throws -> Album {
+        let page = try await collection(id)
+        let root = try await request("browse", body: ["browseId": id])
+        let header = root["header"]["musicDetailHeaderRenderer"]
+        let title = header["title"].label
+        let artist = header["subtitle"].label
+        let cover = header["thumbnail"].image
+
+        return Album(
+            id: id,
+            title: title.isEmpty ? "Album" : title,
+            artist: artist,
+            coverURL: cover,
+            trackCount: page.tracks.count,
+            tracks: page.tracks
+        )
     }
 }

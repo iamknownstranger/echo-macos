@@ -11,6 +11,7 @@ struct ListenTogetherView: View {
     @ViewState private var codeInput = ""
     @AppStorage("listenTogether.customServerURL") private var customServer = ""
     @ViewState private var copiedItem: String?
+    @ViewState private var showQRCode = false
     @ViewState private var serverOptions: [ListenServerOption] = [.init(name: "Metrolist Server", location: "Poland", url: RoomSession.defaultServerURL)]
 
     private var inRoom: Bool { session.state != nil }
@@ -131,13 +132,28 @@ struct ListenTogetherView: View {
                                 Label(copiedItem == "link" ? "Link copied" : "Copy invite link", systemImage: "link")
                             }
                         }
+                        Button {
+                            showQRCode.toggle()
+                        } label: {
+                            Label(showQRCode ? "Hide QR" : "Show QR Code", systemImage: "qrcode")
+                        }
                     }.buttonStyle(.bordered)
+
+                    if showQRCode {
+                        RoomInviteQRCodeView(code: room.roomCode)
+                            .padding(.vertical, 8)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16).background(.background, in: RoundedRectangle(cornerRadius: 8))
                 if session.serverURL != RoomSession.defaultServerURL {
-                    Text("Choose the same server in Android’s Listen Together settings to use this code.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                        Text("Custom relay in use. Android and Mac guests must configure the exact same relay server URL to connect.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                    .background(.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                 }
 
                 if session.role == .host {
@@ -282,5 +298,43 @@ enum RoomInvite {
         let bytes = Array(value.utf8)
         guard bytes.count == 8 else { return false }
         return bytes.allSatisfy { (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) }
+    }
+}
+
+struct RoomInviteQRCodeView: View {
+    let code: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let image = generateQRCode(for: "echomusic://listen?code=\(code)") {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 140, height: 140)
+                    .padding(16)
+                    .background(Color.white)
+                    .cornerRadius(12)
+                    .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
+            } else {
+                Text("QR code could not be generated")
+                    .foregroundColor(.secondary)
+            }
+            Text("Scan with Echo Music on Android or Mac")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func generateQRCode(for string: String) -> NSImage? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(Data(string.utf8), forKey: "inputMessage")
+        filter.setValue("H", forKey: "inputCorrectionLevel")
+
+        guard let output = filter.outputImage else { return nil }
+        let rep = NSCIImageRep(ciImage: output)
+        let nsImage = NSImage(size: rep.size)
+        nsImage.addRepresentation(rep)
+        return nsImage
     }
 }

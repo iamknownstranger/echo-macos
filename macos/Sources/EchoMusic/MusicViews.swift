@@ -37,7 +37,10 @@ struct CoverCard: View {
             Cover(url: coverURL).frame(width: 162, height: 162).padding(.bottom, 3)
             Text(title).font(.headline).lineLimit(1)
             if !subtitle.isEmpty { Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
-        }.frame(width: 162, alignment: .leading).contentShape(Rectangle())
+        }
+        .frame(width: 162, alignment: .leading)
+        .contentShape(Rectangle())
+        .threeDTilt()
     }
 }
 
@@ -143,6 +146,7 @@ struct Transport: View {
     @EnvironmentObject private var player: Player
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var room: RoomSession
+    @ObservedObject private var sleepTimer = SleepTimer.shared
     @Binding var inspector: Inspector?
 
     var body: some View {
@@ -179,9 +183,36 @@ struct Transport: View {
                         .accessibilityLabel("Next song").disabled(!player.hasNext)
                     Scrubber(head: player.head).frame(minWidth: 80, maxWidth: .infinity).padding(.horizontal, 5)
                 }.disabled(room.role == .guest && !room.canControlPlayback)
+
+                Button {
+                    Task { await player.switchPlaybackMode(toVideo: !player.isVideoMode) }
+                } label: {
+                    Image(systemName: player.isVideoMode ? "video.fill" : "video")
+                        .foregroundStyle(player.isVideoMode ? Color.echoAccent : .primary)
+                }
+                .help(player.isVideoMode ? "Switch to Song mode" : "Switch to Video mode")
+                .accessibilityLabel("Toggle Video mode")
+                .disabled(player.current == nil)
+
+                Menu {
+                    Button("Off") { sleepTimer.start(mode: .off) }
+                    Button("15 minutes") { sleepTimer.start(mode: .minutes(15)) }
+                    Button("30 minutes") { sleepTimer.start(mode: .minutes(30)) }
+                    Button("45 minutes") { sleepTimer.start(mode: .minutes(45)) }
+                    Button("60 minutes") { sleepTimer.start(mode: .minutes(60)) }
+                    Button("End of current track") { sleepTimer.start(mode: .endOfTrack) }
+                } label: {
+                    Image(systemName: sleepTimer.activeMode == .off ? "moon.zzz" : "moon.zzz.fill")
+                        .foregroundStyle(sleepTimer.activeMode == .off ? .primary : Color.echoAccent)
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 22)
+                .help(sleepTimer.activeMode == .off ? "Sleep Timer" : "Sleep Timer: \(sleepTimer.activeMode.title)")
+
                 Image(systemName: "speaker.wave.2").foregroundStyle(.secondary).accessibilityHidden(true)
                 Slider(value: $player.volume).frame(width: 58).accessibilityLabel("Volume")
                 Divider().frame(height: 22)
+                inspectorButton(.video, "tv", "Video & PiP")
                 inspectorButton(.lyrics, "quote.bubble", "Lyrics")
                 inspectorButton(.queue, "list.bullet", "Play queue")
             }.buttonStyle(.plain)
@@ -233,11 +264,30 @@ struct InspectorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(mode == .queue ? "Play queue" : "Lyrics").font(.title2.bold())
+                Text(mode == .queue ? "Play queue" : (mode == .video ? "Video & PiP" : "Lyrics")).font(.title2.bold())
                 Spacer()
                 Button(action: close) { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("Close panel")
             }
-            if mode == .queue {
+            if mode == .video {
+                VStack(alignment: .leading, spacing: 12) {
+                    VideoPlaybackView(player: player.playerEngine)
+                        .aspectRatio(16/9, contentMode: .fit)
+                        .cornerRadius(8)
+                        .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 3)
+                    if let track = player.current {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(track.title).font(.headline).lineLimit(1)
+                            Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Button {
+                        Task { await player.switchPlaybackMode(toVideo: !player.isVideoMode) }
+                    } label: {
+                        Label(player.isVideoMode ? "Playing High-Res Video" : "Load Video Stream", systemImage: player.isVideoMode ? "video.fill" : "video")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else if mode == .queue {
                 if player.queue.isEmpty { Text("Play a song to start your queue.").foregroundStyle(.secondary) }
                 ScrollView {
                     LazyVStack(alignment: .leading) {
@@ -312,5 +362,167 @@ struct SyncedLyrics: View {
                 if let line { proxy.scrollTo(line, anchor: .center) }
             }
         }
+    }
+}
+
+// MARK: - Artist Detail View
+
+struct ArtistDetailView: View {
+    let artist: Artist
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var browse: BrowseModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 20) {
+                    if let thumb = artist.thumbnailURL {
+                        AsyncImage(url: thumb) { phase in
+                            if let image = phase.image {
+                                image.resizable().aspectRatio(contentMode: .fill)
+                            } else {
+                                Color.gray.opacity(0.3)
+                            }
+                        }
+                        .frame(width: 130, height: 130)
+                        .clipShape(Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 3)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ARTIST").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(artist.name).font(.system(size: 32, weight: .bold)).lineLimit(1)
+                        if let bio = artist.bio {
+                            Text(bio).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                        }
+                    }
+                }
+                .padding(.top, 10)
+
+                if !artist.singles.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Top Tracks").font(.title2.bold())
+                        TrackRows(tracks: artist.singles)
+                    }
+                }
+
+                if !artist.albums.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Albums & Releases").font(.title2.bold())
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(artist.albums) { alb in
+                                    Button {
+                                        browse.showAlbum(id: alb.id)
+                                    } label: {
+                                        CoverCard(title: alb.title, subtitle: alb.year ?? "", url: alb.coverURL)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+    }
+}
+
+// MARK: - Album Detail View
+
+struct AlbumDetailView: View {
+    let album: Album
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                HStack(spacing: 20) {
+                    Cover(url: album.coverURL)
+                        .frame(width: 150, height: 150)
+                        .cornerRadius(8)
+                        .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                        .threeDTilt()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ALBUM").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(album.title).font(.system(size: 28, weight: .bold)).lineLimit(2)
+                        Text(album.artist).font(.title3).foregroundStyle(.secondary)
+                        if let year = album.year {
+                            Text("\(year) · \(album.tracks.count) tracks").font(.caption).foregroundStyle(.secondary)
+                        }
+                        HStack(spacing: 10) {
+                            Button {
+                                if !album.tracks.isEmpty { player.play(album.tracks, at: 0) }
+                            } label: {
+                                Label("Play Album", systemImage: "play.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.top, 6)
+                    }
+                }
+                .padding(.top, 10)
+
+                Divider()
+                TrackRows(tracks: album.tracks)
+            }
+            .padding(24)
+        }
+    }
+}
+
+// MARK: - Spotify Import Sheet
+
+struct SpotifyImportSheet: View {
+    @Binding var isPresented: Bool
+    @ViewState private var urlString = ""
+    @ViewState private var isBusy = false
+    @ViewState private var statusMessage: String?
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Import from Spotify").font(.title2.bold())
+            Text("Paste any public Spotify track link to stream it natively with zero user login.")
+                .font(.callout).foregroundStyle(.secondary)
+            TextField("https://open.spotify.com/track/...", text: $urlString)
+                .textFieldStyle(.roundedBorder)
+
+            if let msg = statusMessage {
+                Text(msg).font(.caption).foregroundStyle(msg.contains("Error") ? .red : .green)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { isPresented = false }.buttonStyle(.bordered)
+                Button("Import & Play") {
+                    guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+                    isBusy = true
+                    statusMessage = "Resolving Spotify metadata & YouTube stream..."
+                    Task {
+                        do {
+                            let track = try await MultiSourceResolver.shared.resolve(url: url)
+                            library.toggleLike(track)
+                            player.play([track], at: 0)
+                            statusMessage = "Imported: \(track.title)"
+                            isBusy = false
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            isPresented = false
+                        } catch {
+                            statusMessage = "Error: \(error.localizedDescription)"
+                            isBusy = false
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(urlString.isEmpty || isBusy)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SectionID: Hashable {
-    case discover, search, liked, files, downloads, listenTogether, playlist(UUID), collection(MusicCollection)
+    case discover, search, liked, files, downloads, listenTogether, playlist(UUID), collection(MusicCollection), artist(Artist), album(Album)
 }
 
 @MainActor
@@ -19,8 +19,13 @@ final class BrowseModel: ObservableObject {
     @Published private(set) var collectionPage = TrackPage(tracks: [])
     @Published private(set) var collectionBusy = false
     @Published private(set) var collectionError: String?
+    @Published private(set) var activeArtist: Artist?
+    @Published private(set) var activeAlbum: Album?
+    @Published private(set) var detailBusy = false
+    @Published private(set) var detailError: String?
     private var searchTask: Task<Void, Never>?
     private var collectionTask: Task<Void, Never>?
+    private var detailTask: Task<Void, Never>?
 
     func discover() async {
         guard !discovering else { return }
@@ -70,6 +75,40 @@ final class BrowseModel: ObservableObject {
                 collectionPage.continuation = page.continuation == token ? nil : page.continuation
             } catch { if !Task.isCancelled { collectionError = error.localizedDescription } }
             if !Task.isCancelled { collectionBusy = false }
+        }
+    }
+
+    func showArtist(id: String) {
+        detailTask?.cancel()
+        detailBusy = true
+        detailError = nil
+        detailTask = Task {
+            do {
+                let artist = try await Catalog.shared.artist(id: id)
+                try Task.checkCancellation()
+                self.activeArtist = artist
+                self.section = .artist(artist)
+            } catch {
+                if !Task.isCancelled { self.detailError = error.localizedDescription }
+            }
+            if !Task.isCancelled { self.detailBusy = false }
+        }
+    }
+
+    func showAlbum(id: String) {
+        detailTask?.cancel()
+        detailBusy = true
+        detailError = nil
+        detailTask = Task {
+            do {
+                let album = try await Catalog.shared.album(id: id)
+                try Task.checkCancellation()
+                self.activeAlbum = album
+                self.section = .album(album)
+            } catch {
+                if !Task.isCancelled { self.detailError = error.localizedDescription }
+            }
+            if !Task.isCancelled { self.detailBusy = false }
         }
     }
 }

@@ -22,10 +22,18 @@ for size in 16 32 128 256 512; do
     sips -z "$double" "$double" ../assets/Echo-new.png --out "$stage/Echo.iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$stage/Echo.iconset" -o "$resources/Echo.icns"
-codesign --force --sign - "$app"
+if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
+    codesign --force --timestamp --options runtime --entitlements EchoMusic.entitlements --sign "$CODESIGN_IDENTITY" "$app"
+else
+    codesign --force --entitlements EchoMusic.entitlements --sign - "$app"
+fi
 codesign --verify --strict "$app"
 lipo -verify_arch arm64 "$app/Contents/MacOS/EchoMusic"
 ditto -c -k --keepParent "$app" "$stage/Echo-Music-arm64.zip"
+if [[ -n "${NOTARY_KEY:-}" ]] && [[ -n "${NOTARY_ISSUER:-}" ]]; then
+    xcrun notarytool submit "$stage/Echo-Music-arm64.zip" --key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
+    xcrun stapler staple "$app"
+fi
 if [[ -e "build/Echo Music.app" ]]; then
     mv "build/Echo Music.app" "$stage/previous.app"
 fi
