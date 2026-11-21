@@ -263,3 +263,88 @@ struct OdesliEntity: Codable {
     let artistName: String?
     let thumbnailUrl: String?
 }
+
+// MARK: - History & Playback Tracking
+
+struct HistoryEntry: Identifiable, Codable, Hashable {
+    public var id = UUID()
+    public let track: Track
+    public let playedAt: Date
+
+    public init(id: UUID = UUID(), track: Track, playedAt: Date = Date()) {
+        self.id = id
+        self.track = track
+        self.playedAt = playedAt
+    }
+}
+
+// MARK: - Equalizer Models
+
+struct EQBand: Identifiable, Hashable, Codable {
+    public var id: Double { frequency }
+    public let frequency: Double // in Hz
+    public var gain: Double // in dB (-12.0 ... 12.0)
+
+    public var label: String {
+        if frequency >= 1000 {
+            return String(format: "%.1fk", frequency / 1000.0)
+        }
+        return "\(Int(frequency))"
+    }
+
+    public init(frequency: Double, gain: Double = 0.0) {
+        self.frequency = frequency
+        self.gain = min(max(gain, -12.0), 12.0)
+    }
+}
+
+struct EQPreset: Identifiable, Hashable, Codable {
+    public let id: String
+    public let name: String
+    public let gains: [Double] // 5 bands: 60Hz, 230Hz, 910Hz, 3.6kHz, 14kHz
+
+    public init(id: String, name: String, gains: [Double]) {
+        self.id = id
+        self.name = name
+        self.gains = gains
+    }
+
+    public static let standardFrequencies: [Double] = [60.0, 230.0, 910.0, 3600.0, 14000.0]
+
+    public static let flat = EQPreset(id: "flat", name: "Flat", gains: [0, 0, 0, 0, 0])
+    public static let acoustic = EQPreset(id: "acoustic", name: "Acoustic", gains: [4.5, 3.0, 1.5, 3.5, 4.0])
+    public static let bassBooster = EQPreset(id: "bass_booster", name: "Bass Booster", gains: [6.0, 4.5, 2.0, 0.5, 0.0])
+    public static let bassReducer = EQPreset(id: "bass_reducer", name: "Bass Reducer", gains: [-6.0, -4.5, -2.0, 0.0, 0.0])
+    public static let classical = EQPreset(id: "classical", name: "Classical", gains: [4.0, 3.0, 0.0, 2.5, 3.5])
+    public static let electronic = EQPreset(id: "electronic", name: "Electronic", gains: [5.0, 4.0, -1.0, 2.0, 4.5])
+    public static let hipHop = EQPreset(id: "hiphop", name: "Hip-Hop", gains: [5.5, 4.5, 0.0, 2.0, 3.5])
+    public static let jazz = EQPreset(id: "jazz", name: "Jazz", gains: [3.5, 2.0, -1.5, 1.5, 3.5])
+    public static let pop = EQPreset(id: "pop", name: "Pop", gains: [-1.5, 2.0, 5.0, 3.0, -1.0])
+    public static let rock = EQPreset(id: "rock", name: "Rock", gains: [5.0, 3.0, -1.0, 3.0, 5.0])
+    public static let vocalBooster = EQPreset(id: "vocal_booster", name: "Vocal Booster", gains: [-2.0, 1.0, 5.5, 3.5, 1.0])
+
+    public static let allPresets: [EQPreset] = [
+        .flat, .acoustic, .bassBooster, .bassReducer, .classical,
+        .electronic, .hipHop, .jazz, .pop, .rock, .vocalBooster
+    ]
+}
+
+// MARK: - Category & Discovery Items
+
+struct CategoryItem: Identifiable, Hashable {
+    public let id: String
+    public let title: String
+    public let subtitle: String?
+    public let thumbnailURL: URL?
+    public let browseId: String?
+    public let params: String?
+
+    public init(id: String, title: String, subtitle: String? = nil, thumbnailURL: URL? = nil, browseId: String? = nil, params: String? = nil) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.thumbnailURL = thumbnailURL
+        self.browseId = browseId
+        self.params = params
+    }
+}

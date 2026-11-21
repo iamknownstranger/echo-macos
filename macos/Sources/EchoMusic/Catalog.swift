@@ -55,26 +55,66 @@ enum CatalogParser {
     }
 
     static func home(_ response: Node) -> [Shelf] {
+        shelves(from: response)
+    }
+
+    static func shelves(from response: Node) -> [Shelf] {
         let sections = response["contents"]["singleColumnBrowseResultsRenderer"].sectionList
         return sections.compactMap { section in
+            // 1. Carousel Shelf Renderer
             let shelf = section["musicCarouselShelfRenderer"]
-            let title = shelf["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"].label
-            var seen = Set<String>()
-            let entries: [CatalogEntry] = shelf["contents"].nodes.compactMap { item in
-                if let track = song(item["musicResponsiveListItemRenderer"]) { return .track(track) }
-                let row = item["musicTwoRowItemRenderer"]
-                let name = row["title"].label
-                guard !name.isEmpty else { return nil }
-                let endpoint = row["navigationEndpoint"]
-                let image = row["thumbnailRenderer"].image
-                if let id = endpoint["watchEndpoint"]["videoId"].string, SongLink.validID(id) {
-                    return .track(Track(source: .youtube(id), title: name, artist: row["subtitle"].label, artwork: image))
-                }
-                let browse = endpoint["browseEndpoint"]
-                guard let id = browse["browseId"].string, id.hasPrefix("VL") || id.hasPrefix("MPRE") else { return nil }
-                return .collection(MusicCollection(id: id, title: name, subtitle: row["subtitle"].label, artwork: image))
-            }.filter { seen.insert($0.id).inserted }
-            return entries.isEmpty ? nil : Shelf(title: title.isEmpty ? "From YouTube Music" : title, entries: entries)
+            if shelf.value != nil {
+                let title = shelf["header"]["musicCarouselShelfBasicHeaderRenderer"]["title"].label
+                var seen = Set<String>()
+                let entries: [CatalogEntry] = shelf["contents"].nodes.compactMap { item in
+                    if let track = song(item["musicResponsiveListItemRenderer"]) { return .track(track) }
+                    let row = item["musicTwoRowItemRenderer"]
+                    let name = row["title"].label
+                    guard !name.isEmpty else { return nil }
+                    let endpoint = row["navigationEndpoint"]
+                    let image = row["thumbnailRenderer"].image
+                    if let id = endpoint["watchEndpoint"]["videoId"].string, SongLink.validID(id) {
+                        return .track(Track(source: .youtube(id), title: name, artist: row["subtitle"].label, artwork: image))
+                    }
+                    let browse = endpoint["browseEndpoint"]
+                    guard let id = browse["browseId"].string, id.hasPrefix("VL") || id.hasPrefix("MPRE") || id.hasPrefix("FEmusic") else { return nil }
+                    return .collection(MusicCollection(id: id, title: name, subtitle: row["subtitle"].label, artwork: image))
+                }.filter { seen.insert($0.id).inserted }
+                return entries.isEmpty ? nil : Shelf(title: title.isEmpty ? "From YouTube Music" : title, entries: entries)
+            }
+
+            // 2. Grid Renderer
+            let grid = section["gridRenderer"]
+            if grid.value != nil {
+                let title = grid["header"]["gridHeaderRenderer"]["title"].label
+                var seen = Set<String>()
+                let entries: [CatalogEntry] = grid["items"].nodes.compactMap { item in
+                    let row = item["musicTwoRowItemRenderer"]
+                    if row.value != nil {
+                        let name = row["title"].label
+                        guard !name.isEmpty else { return nil }
+                        let endpoint = row["navigationEndpoint"]
+                        let image = row["thumbnailRenderer"].image
+                        if let id = endpoint["watchEndpoint"]["videoId"].string, SongLink.validID(id) {
+                            return .track(Track(source: .youtube(id), title: name, artist: row["subtitle"].label, artwork: image))
+                        }
+                        let browse = endpoint["browseEndpoint"]
+                        guard let id = browse["browseId"].string else { return nil }
+                        return .collection(MusicCollection(id: id, title: name, subtitle: row["subtitle"].label, artwork: image))
+                    }
+                    let btn = item["musicNavigationButtonRenderer"]
+                    if btn.value != nil {
+                        let name = btn["buttonText"].label
+                        guard !name.isEmpty else { return nil }
+                        let browseId = btn["clickCommand"]["browseEndpoint"]["browseId"].string ?? ""
+                        return .collection(MusicCollection(id: browseId, title: name, subtitle: "Category", artwork: nil))
+                    }
+                    return nil
+                }.filter { seen.insert($0.id).inserted }
+                return entries.isEmpty ? nil : Shelf(title: title.isEmpty ? "Explore" : title, entries: entries)
+            }
+
+            return nil
         }
     }
 }
@@ -126,6 +166,32 @@ actor Catalog {
         let shelves = CatalogParser.home(try await request("browse", body: ["browseId": "FEmusic_home"]))
         guard !shelves.isEmpty else { throw EchoError("Discovery is unavailable. You can still search for a song.") }
         return shelves
+    }
+
+    /// Fetches YouTube Music Top Charts (Top Songs, Top Music Videos, Trending).
+    func charts() async throws -> [Shelf] {
+        let root = try await request("browse", body: ["browseId": "FEmusic_charts"])
+        return CatalogParser.shelves(from: root)
+    }
+
+    /// Fetches curated Moods, Genres, and Categories (Chill, Workout, Focus, Romance, Sleep, etc.).
+    func moodsAndGenres() async throws -> [Shelf] {
+        let root = try await request("browse", body: ["browseId": "FEmusic_moods_and_genres"])
+        return CatalogParser.shelves(from: root)
+    }
+
+    /// Fetches latest New Release album and single drops.
+    func newReleases() async throws -> [Shelf] {
+        let root = try await request("browse", body: ["browseId": "FEmusic_new_releases"])
+        return CatalogParser.shelves(from: root)
+    }
+
+    /// Fetches a specific browse endpoint with optional params.
+    func browse(browseId: String, params: String? = nil) async throws -> [Shelf] {
+        var body: [String: Any] = ["browseId": browseId]
+        if let params { body["params"] = params }
+        let root = try await request("browse", body: body)
+        return CatalogParser.shelves(from: root)
     }
 
     func search(_ text: String, continuation: String? = nil) async throws -> TrackPage {

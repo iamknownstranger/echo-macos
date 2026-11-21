@@ -147,7 +147,9 @@ struct Transport: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var room: RoomSession
     @ObservedObject private var sleepTimer = SleepTimer.shared
+    @ObservedObject private var equalizer = Equalizer.shared
     @Binding var inspector: Inspector?
+    @ViewState private var equalizerSheetOpen = false
 
     var body: some View {
         VStack(spacing: 5) {
@@ -209,6 +211,24 @@ struct Transport: View {
                 .frame(width: 22)
                 .help(sleepTimer.activeMode == .off ? "Sleep Timer" : "Sleep Timer: \(sleepTimer.activeMode.title)")
 
+                Button {
+                    equalizerSheetOpen = true
+                } label: {
+                    Image(systemName: "slider.vertical.3")
+                        .foregroundStyle(equalizer.isEnabled ? Color.echoAccent : .primary)
+                }
+                .help("Equalizer & Loudness Normalization")
+                .accessibilityLabel("Equalizer")
+
+                Button {
+                    AmbientWindowController.shared.toggle(player: player, library: library)
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+                .help("Ambient Full-Screen Screensaver Player")
+                .accessibilityLabel("Ambient Player")
+                .disabled(player.current == nil)
+
                 Image(systemName: "speaker.wave.2").foregroundStyle(.secondary).accessibilityHidden(true)
                 Slider(value: $player.volume).frame(width: 58).accessibilityLabel("Volume")
                 Divider().frame(height: 22)
@@ -218,6 +238,9 @@ struct Transport: View {
             }.buttonStyle(.plain)
         }
         .padding(.horizontal, 17).padding(.vertical, 11).background(.regularMaterial)
+        .sheet(isPresented: $equalizerSheetOpen) {
+            EqualizerSheet(isPresented: $equalizerSheetOpen)
+        }
     }
 
     private func inspectorButton(_ mode: Inspector, _ symbol: String, _ title: String) -> some View {
@@ -524,5 +547,327 @@ struct SpotifyImportSheet: View {
         }
         .padding(20)
         .frame(width: 460)
+    }
+}
+
+// MARK: - Equalizer Sheet
+
+struct EqualizerSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject private var equalizer = Equalizer.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Text("Equalizer & Normalization").font(.title2.bold())
+                Spacer()
+                Toggle("", isOn: $equalizer.isEnabled)
+                    .toggleStyle(.switch)
+                    .accessibilityLabel("Toggle Equalizer")
+            }
+
+            // Preset Selector
+            HStack {
+                Text("Preset:").font(.headline)
+                Picker("", selection: $equalizer.currentPreset) {
+                    ForEach(EQPreset.allPresets) { preset in
+                        Text(preset.name).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+                .disabled(!equalizer.isEnabled)
+            }
+
+            Divider()
+
+            // 5-Band Slider Controls
+            HStack(spacing: 24) {
+                ForEach(Array(equalizer.bands.enumerated()), id: \.element.frequency) { index, band in
+                    VStack(spacing: 8) {
+                        Text(String(format: "%+.1fdB", band.gain))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+
+                        Slider(
+                            value: Binding(
+                                get: { equalizer.bands[index].gain },
+                                set: { equalizer.setBandGain(at: index, gain: $0) }
+                            ),
+                            in: -12.0...12.0,
+                            step: 0.5
+                        )
+                        .frame(height: 140)
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 32)
+                        .disabled(!equalizer.isEnabled)
+
+                        Text(band.label)
+                            .font(.caption.weight(.semibold))
+                    }
+                    .frame(width: 50)
+                }
+            }
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            Divider()
+
+            // Loudness Normalization Toggle (ReplayGain leveling)
+            Toggle(isOn: $equalizer.loudnessNormalizationEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Audio Loudness Normalization").font(.headline)
+                    Text("Dynamically adjusts playback levels to prevent abrupt volume shifts between tracks.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.checkbox)
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    isPresented = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(22)
+        .frame(width: 480)
+    }
+}
+
+// MARK: - History View
+
+struct HistoryView: View {
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Listening History").font(.system(size: 35, weight: .bold)).tracking(-1.4)
+                    Text("\(library.data.history.count) plays tracked")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !library.data.history.isEmpty {
+                    Button(role: .destructive) {
+                        library.clearHistory()
+                    } label: {
+                        Label("Clear History", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if library.data.history.isEmpty {
+                Notice(
+                    symbol: "clock.arrow.circlepath",
+                    title: "No history yet",
+                    detail: "Songs you listen to for more than 30 seconds or 50% of their length will appear here."
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(library.data.history) { entry in
+                            HStack(spacing: 12) {
+                                Cover(url: entry.track.artwork).frame(width: 44, height: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.track.title).font(.body.weight(.medium)).lineLimit(1)
+                                    Text(entry.track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 3) {
+                                    Text(entry.playedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                    let count = library.playCount(for: entry.track)
+                                    if count > 1 {
+                                        Text("\(count) plays")
+                                            .font(.caption2.weight(.bold))
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.echoAccent.opacity(0.15), in: Capsule())
+                                            .foregroundStyle(Color.echoAccent)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                player.play([entry.track])
+                            }
+                            .contextMenu { SongMenu(track: entry.track) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Charts View
+
+struct ChartsView: View {
+    @EnvironmentObject private var browse: BrowseModel
+    @EnvironmentObject private var player: Player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Top Charts").font(.system(size: 35, weight: .bold)).tracking(-1.4)
+
+            if browse.chartsBusy {
+                LoadingShelf()
+            } else if let error = browse.chartsError {
+                Notice(symbol: "network.slash", title: "Couldn't load Charts", detail: error)
+                Button("Try again") { Task { await browse.loadCharts() } }
+            } else if browse.chartsShelves.isEmpty {
+                Notice(symbol: "chart.line.uptrend.xyaxis", title: "Charts unavailable", detail: "Check network connection or try again later.")
+            } else {
+                ForEach(Array(browse.chartsShelves.enumerated()), id: \.offset) { _, shelf in
+                    shelfView(shelf)
+                }
+            }
+        }
+        .task {
+            if browse.chartsShelves.isEmpty {
+                await browse.loadCharts()
+            }
+        }
+    }
+
+    private func shelfView(_ shelf: Shelf) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(shelf.title).font(.title2.bold()).tracking(-0.5)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(shelf.entries) { entry in
+                        switch entry {
+                        case .collection(let item):
+                            Button { browse.show(item) } label: {
+                                CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
+                            }.buttonStyle(.plain)
+                        case .track(let track):
+                            Button {
+                                let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }
+                                player.play(tracks, at: tracks.firstIndex(where: { $0.id == track.id }) ?? 0)
+                            } label: { CoverCard(title: track.title, subtitle: track.artist, url: track.artwork) }
+                            .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
+                        }
+                    }
+                }.padding(.bottom, 5)
+            }
+        }
+    }
+}
+
+// MARK: - Moods & Genres View
+
+struct MoodsAndGenresView: View {
+    @EnvironmentObject private var browse: BrowseModel
+    @EnvironmentObject private var player: Player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Moods & Genres").font(.system(size: 35, weight: .bold)).tracking(-1.4)
+
+            if browse.moodsBusy {
+                LoadingShelf()
+            } else if let error = browse.moodsError {
+                Notice(symbol: "network.slash", title: "Couldn't load Moods & Genres", detail: error)
+                Button("Try again") { Task { await browse.loadMoods() } }
+            } else if browse.moodsShelves.isEmpty {
+                Notice(symbol: "music.quarternote.3", title: "Moods unavailable", detail: "Check network connection or try again later.")
+            } else {
+                ForEach(Array(browse.moodsShelves.enumerated()), id: \.offset) { _, shelf in
+                    shelfView(shelf)
+                }
+            }
+        }
+        .task {
+            if browse.moodsShelves.isEmpty {
+                await browse.loadMoods()
+            }
+        }
+    }
+
+    private func shelfView(_ shelf: Shelf) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(shelf.title).font(.title2.bold()).tracking(-0.5)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(shelf.entries) { entry in
+                        switch entry {
+                        case .collection(let item):
+                            Button { browse.show(item) } label: {
+                                CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
+                            }.buttonStyle(.plain)
+                        case .track(let track):
+                            Button {
+                                let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }
+                                player.play(tracks, at: tracks.firstIndex(where: { $0.id == track.id }) ?? 0)
+                            } label: { CoverCard(title: track.title, subtitle: track.artist, url: track.artwork) }
+                            .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
+                        }
+                    }
+                }.padding(.bottom, 5)
+            }
+        }
+    }
+}
+
+// MARK: - New Releases View
+
+struct NewReleasesView: View {
+    @EnvironmentObject private var browse: BrowseModel
+    @EnvironmentObject private var player: Player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("New Releases").font(.system(size: 35, weight: .bold)).tracking(-1.4)
+
+            if browse.newReleasesBusy {
+                LoadingShelf()
+            } else if let error = browse.newReleasesError {
+                Notice(symbol: "network.slash", title: "Couldn't load New Releases", detail: error)
+                Button("Try again") { Task { await browse.loadNewReleases() } }
+            } else if browse.newReleasesShelves.isEmpty {
+                Notice(symbol: "sparkles", title: "New releases unavailable", detail: "Check network connection or try again later.")
+            } else {
+                ForEach(Array(browse.newReleasesShelves.enumerated()), id: \.offset) { _, shelf in
+                    shelfView(shelf)
+                }
+            }
+        }
+        .task {
+            if browse.newReleasesShelves.isEmpty {
+                await browse.loadNewReleases()
+            }
+        }
+    }
+
+    private func shelfView(_ shelf: Shelf) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(shelf.title).font(.title2.bold()).tracking(-0.5)
+            ScrollView(.horizontal) {
+                LazyHStack(alignment: .top, spacing: 14) {
+                    ForEach(shelf.entries) { entry in
+                        switch entry {
+                        case .collection(let item):
+                            Button { browse.show(item) } label: {
+                                CoverCard(title: item.title, subtitle: item.subtitle, url: item.artwork)
+                            }.buttonStyle(.plain)
+                        case .track(let track):
+                            Button {
+                                let tracks = shelf.entries.compactMap { if case .track(let row) = $0 { return row }; return nil }
+                                player.play(tracks, at: tracks.firstIndex(where: { $0.id == track.id }) ?? 0)
+                            } label: { CoverCard(title: track.title, subtitle: track.artist, url: track.artwork) }
+                            .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
+                        }
+                    }
+                }.padding(.bottom, 5)
+            }
+        }
     }
 }

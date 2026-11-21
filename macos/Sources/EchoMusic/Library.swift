@@ -14,6 +14,8 @@ struct LibraryData: Codable {
     var files: [Track] = []
     var playlists: [Playlist] = []
     var downloads: [Track] = []
+    var history: [HistoryEntry] = []
+    var playCounts: [String: Int] = [:]
 
     init() {}
 
@@ -23,11 +25,14 @@ struct LibraryData: Codable {
         files = try box.decode([Track].self, forKey: .files)
         playlists = try box.decode([Playlist].self, forKey: .playlists)
         downloads = try box.decodeIfPresent([Track].self, forKey: .downloads) ?? []
+        history = try box.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? []
+        playCounts = try box.decodeIfPresent([String: Int].self, forKey: .playCounts) ?? [:]
     }
 }
 
 @MainActor
 final class Library: ObservableObject {
+    public static weak var shared: Library?
     @Published private(set) var data = LibraryData()
     @Published var issue: String?
     @Published private(set) var importsInProgress = 0
@@ -38,6 +43,7 @@ final class Library: ObservableObject {
     init(file: URL? = nil) {
         self.file = file ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Echo Music/library.json")
+        Self.shared = self
         let backupURL = self.file.deletingPathExtension().appendingPathExtension("bak.json")
         do {
             let fileData = try Data(contentsOf: self.file)
@@ -96,6 +102,27 @@ final class Library: ObservableObject {
             if $0.liked.contains(where: { $0.id == track.id }) { $0.liked.removeAll { $0.id == track.id } }
             else { $0.liked.insert(track, at: 0) }
         }
+    }
+
+    func recordPlay(track: Track) {
+        update {
+            let entry = HistoryEntry(track: track, playedAt: Date())
+            $0.history.insert(entry, at: 0)
+            if $0.history.count > 500 {
+                $0.history = Array($0.history.prefix(500))
+            }
+            $0.playCounts[track.id, default: 0] += 1
+        }
+    }
+
+    func clearHistory() {
+        update {
+            $0.history.removeAll()
+        }
+    }
+
+    func playCount(for track: Track) -> Int {
+        data.playCounts[track.id, default: 0]
     }
 
     @discardableResult

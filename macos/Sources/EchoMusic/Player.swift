@@ -144,7 +144,12 @@ final class Player: ObservableObject {
             Task { @MainActor in
                 guard let self, self.engine.currentItem != nil else { return }
                 let time = self.engine.currentTime().seconds
-                if time.isFinite { self.head.seconds = max(0, time) }
+                if time.isFinite {
+                    self.head.seconds = max(0, time)
+                    if let track = self.current {
+                        PlaybackTracker.shared.timeDidUpdate(to: max(0, time), track: track)
+                    }
+                }
             }
         }
         rateObserver = engine.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
@@ -202,6 +207,7 @@ final class Player: ObservableObject {
         engine.replaceCurrentItem(with: nil)
         index = selected
         let track = queue[selected]
+        PlaybackTracker.shared.trackDidChange(to: track)
         ended = false
         failure = nil
         wantsPlayback = autoplay
@@ -254,6 +260,7 @@ final class Player: ObservableObject {
     }
 
     private func load(_ item: AVPlayerItem, ticket: UUID) {
+        Equalizer.shared.configureAudio(for: item)
         engine.replaceCurrentItem(with: item)
         itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor in

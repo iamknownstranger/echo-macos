@@ -109,10 +109,14 @@ struct Workspace: View {
                 Text("Echo Music").font(.system(size: 20, weight: .bold)).tracking(-0.7)
             }.padding(.vertical, 22).padding(.leading, 7)
             nav("Discover", "sparkle.magnifyingglass", .discover)
+            nav("Charts", "chart.line.uptrend.xyaxis", .charts)
+            nav("Moods & Genres", "music.quarternote.3", .moods)
+            nav("New Releases", "sparkles", .newReleases)
             nav("Search", "magnifyingglass", .search)
             nav("Listen Together", "person.2.wave.2", .listenTogether)
             Text("Library").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 21).padding(.horizontal, 10)
             nav("Liked songs", "heart", .liked)
+            nav("History", "clock.arrow.circlepath", .history)
             nav("Downloads", "arrow.down.circle", .downloads)
             nav("On this Mac", "internaldrive", .files)
             HStack {
@@ -198,6 +202,14 @@ struct Workspace: View {
             ForEach(Array(browse.shelves.enumerated()), id: \.offset) { _, shelf in
                 shelfView(shelf)
             }
+        case .charts:
+            ChartsView()
+        case .moods:
+            MoodsAndGenresView()
+        case .newReleases:
+            NewReleasesView()
+        case .history:
+            HistoryView()
         case .search:
             heading("Search")
             if !browse.submitted.isEmpty {
