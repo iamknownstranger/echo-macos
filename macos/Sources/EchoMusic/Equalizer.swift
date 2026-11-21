@@ -2,6 +2,7 @@ import AVFoundation
 import Accelerate
 import Foundation
 import MediaToolbox
+import CZlib
 
 // CoreAudio Real-Time Processing Context
 private final class AudioTapProcessorContext {
@@ -128,7 +129,9 @@ final class Equalizer: ObservableObject {
         )
 
         var tap: MTAudioProcessingTap?
-        let tapStatus = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
+        let tapStatus = withUnsafeMutablePointer(to: &tap) { tapPtr in
+            echoCreateAudioProcessingTap(&callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, tapPtr)
+        }
         guard tapStatus == noErr, let tap = tap else { return }
 
         let audioMix = AVMutableAudioMix()
