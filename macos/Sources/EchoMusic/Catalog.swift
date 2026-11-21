@@ -284,40 +284,88 @@ actor Catalog {
         }
     }
 
+    /// Searches specifically for music videos using YouTube Music's video filter.
+    func searchVideos(_ text: String) async throws -> [Track] {
+        let res = try await request("search", body: ["query": text, "params": "EgWKAQIQAWoKEAkQBRAKEAMQBA%3D%3D"])
+        let shelves = res["contents"]["tabbedSearchResultsRenderer"].sectionList
+        guard let shelf = shelves.first(where: { $0["musicShelfRenderer"].value != nil }) else { return [] }
+        return CatalogParser.page(shelf["musicShelfRenderer"]).tracks
+    }
+
+    private func findBestVideoMatch(candidates: [Track], title: String, artist: String) -> String? {
+        let cleanTitleWords = title.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { $0.count > 1 }
+        guard !cleanTitleWords.isEmpty else { return nil }
+
+        for candidate in candidates {
+            guard case .youtube(let id) = candidate.source else { continue }
+            let candTitleLower = candidate.title.lowercased()
+            let matchesTitle = cleanTitleWords.allSatisfy { candTitleLower.contains($0) }
+            if matchesTitle {
+                return id
+            }
+        }
+        return nil
+    }
+
     /// Resolves high-definition video stream for YouTube video ID with macOS AVPlayer / PiP support.
-    func videoStream(for videoID: String) async throws -> Stream {
+    func videoStream(for videoID: String, title: String? = nil, artist: String? = nil) async throws -> Stream {
         guard SongLink.validID(videoID) else { throw EchoError("This video link is invalid.") }
         if visitor == nil {
             _ = try await request("browse", body: ["browseId": "FEmusic_home"])
         }
-        let root = try await request("player", body: ["videoId": videoID], player: true)
+
+        var resolvedVideoID = videoID
+        if let title = title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
+            let cleanTitle = title.replacingOccurrences(of: "\\(.*?\\)", with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+            let query = "\(cleanTitle) \(artist ?? "")"
+            if let videoResults = try? await searchVideos(query), !videoResults.isEmpty {
+                if let match = findBestVideoMatch(candidates: videoResults, title: cleanTitle, artist: artist ?? "") {
+                    resolvedVideoID = match
+                }
+            }
+        }
+
+        let root = try await request("player", body: ["videoId": resolvedVideoID], player: true)
         let status = root["playabilityStatus"]
         guard status["status"].string == "OK" else {
             throw EchoError(status["reason"].string ?? "This video is unavailable from YouTube.")
         }
         let media = root["streamingData"]
-        let allFormats = media["formats"].nodes + media["adaptiveFormats"].nodes
-        let videoFormats = allFormats.filter {
+
+        // Prioritize Apple HLS (.m3u8) because it contains synchronized audio + multi-bitrate video natively in AVPlayer
+        let hlsURL = media["hlsManifestUrl"].string.flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0 : nil }
+
+        // Fallback: formats with audio + video (muxed), or video/mp4
+        let muxedFormats = media["formats"].nodes.filter {
             let mime = $0["mimeType"].string ?? ""
             return mime.contains("video/mp4") && $0["url"].string != nil
         }.sorted { ($0["bitrate"].value as? Int ?? 0) > ($1["bitrate"].value as? Int ?? 0) }
 
-        let urls = videoFormats.compactMap { $0["url"].string } + [media["hlsManifestUrl"].string].compactMap { $0 }
-        guard let url = urls.compactMap(URL.init(string:)).first(where: { $0.scheme == "https" }) else {
+        let adaptiveVideoFormats = media["adaptiveFormats"].nodes.filter {
+            let mime = $0["mimeType"].string ?? ""
+            return mime.contains("video/mp4") && $0["url"].string != nil
+        }.sorted { ($0["bitrate"].value as? Int ?? 0) > ($1["bitrate"].value as? Int ?? 0) }
+
+        let fallbackURLs = (muxedFormats.compactMap { $0["url"].string } + adaptiveVideoFormats.compactMap { $0["url"].string }).compactMap(URL.init(string:))
+
+        guard let url = hlsURL ?? fallbackURLs.first(where: { $0.scheme == "https" }) else {
             throw EchoError("This video has no compatible stream that the Mac player can open.")
         }
+
         let meta = root["videoDetails"]
         let urlDur = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "dur" })?.value.flatMap(Double.init)
         let resolvedDuration = meta["lengthSeconds"].string.flatMap(Double.init) ?? urlDur
         let track = Track(
-            source: .youtube(videoID),
-            title: meta["title"].string ?? videoID,
-            artist: meta["author"].string ?? "",
+            source: .youtube(resolvedVideoID),
+            title: meta["title"].string ?? title ?? resolvedVideoID,
+            artist: meta["author"].string ?? artist ?? "",
             artwork: meta["thumbnail"]["thumbnails"].nodes.last?["url"].string.flatMap(URL.init(string:)),
             duration: resolvedDuration,
-            playbackSource: .youtube(videoID)
+            playbackSource: .youtube(resolvedVideoID)
         )
-        let bytes = videoFormats.first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)
+        let bytes = (muxedFormats + adaptiveVideoFormats).first(where: { $0["url"].string == url.absoluteString })?["contentLength"].string.flatMap(Int64.init)
         return Stream(url: url, track: track, audioByteCount: bytes)
     }
 

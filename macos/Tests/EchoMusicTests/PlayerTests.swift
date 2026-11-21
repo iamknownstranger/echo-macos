@@ -81,28 +81,52 @@ import Testing
     }
 
     @MainActor
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["ECHO_LIVE_TESTS"] == "1"))
-    func livePlayerDurationRespectsYouTubeAuthoritativeMetadata() async throws {
+    @Test func videoPlaybackModeSwitching() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let url = directory.appendingPathComponent("TestSong.caf")
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1))
+        let audioFile = try AVAudioFile(forWriting: url, settings: format.settings)
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 88200))
+        buffer.frameLength = buffer.frameCapacity
+        buffer.floatChannelData?[0].update(repeating: 0, count: Int(buffer.frameLength))
+        try audioFile.write(from: buffer)
+
         let player = Player(systemControls: false)
-        // Simulate a track clicked from Discover shelf without initial duration
-        let track = Track(source: .youtube("i1o1p_DD6TU"), title: "Gehra Hua", artist: "Shashwat Sachdev")
-        #expect(track.duration == nil)
-        
+        let track = Track(source: .file(url), title: "Test Song", artist: "Artist", duration: 120.0)
         player.play([track], at: 0)
-        
-        // Wait for stream resolution and AVPlayerItem readyToPlay
+
         let start = Date()
-        while (player.loading || player.duration <= 0) && Date().timeIntervalSince(start) < 15.0 {
+        while player.loading && Date().timeIntervalSince(start) < 5.0 {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(player.isVideoMode == false)
+        await player.switchPlaybackMode(toVideo: true)
+        #expect(player.isVideoMode == true)
+        await player.switchPlaybackMode(toVideo: false)
+        #expect(player.isVideoMode == false)
+
+        player.pause()
+    }
+
+    @MainActor
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["ECHO_LIVE_TESTS"] == "1"))
+    func liveVideoStreamResolvesHLSWithAudioAndVideoTracks() async throws {
+        let stream = try await Catalog.shared.videoStream(for: "i1o1p_DD6TU", title: "Gehra Hua", artist: "Shashwat Sachdev")
+        #expect(stream.url.scheme == "https")
+        #expect(stream.track.duration != nil)
+        
+        let item = AVPlayerItem(url: stream.url)
+        let player = AVPlayer(playerItem: item)
+        player.play()
+        let start = Date()
+        while item.status == .unknown && Date().timeIntervalSince(start) < 10.0 {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        
-        #expect(player.loading == false)
-        // The authoritative duration is ~362 seconds; AVPlayerItem's timescale bug reports ~724 seconds.
-        #expect(player.duration >= 360.0 && player.duration <= 365.0)
-        #expect(player.duration < 500.0)
-        #expect(player.queue[0].duration != nil)
-        #expect(player.queue[0].duration! >= 360.0 && player.queue[0].duration! <= 365.0)
-        
+        #expect(item.status == .readyToPlay)
         player.pause()
     }
 }

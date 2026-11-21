@@ -234,7 +234,7 @@ final class Player: ObservableObject {
                         break
                     }
                     if isVideoMode {
-                        let stream = try await Catalog.shared.videoStream(for: id)
+                        let stream = try await Catalog.shared.videoStream(for: id, title: track.title, artist: track.artist)
                         try Task.checkCancellation()
                         guard generation == ticket else { return }
                         url = stream.url
@@ -355,25 +355,42 @@ final class Player: ObservableObject {
         guard isVideoMode != toVideo else { return }
         isVideoMode = toVideo
         guard let current else { return }
-        if case .youtube(let id) = current.playbackSource ?? current.source {
-            let savedTime = head.seconds
-            let wasPlaying = wantsPlayback
-            do {
-                loading = true
-                let streamObj = toVideo ? try await Catalog.shared.videoStream(for: id) : try await Catalog.shared.stream(for: id)
-                let item = AVPlayerItem(url: streamObj.url)
-                if let dur = streamObj.track.duration ?? current.duration, dur > 0 {
-                    duration = dur
+        let savedTime = head.seconds
+        let wasPlaying = wantsPlayback
+        do {
+            loading = true
+            let streamObj: Catalog.Stream
+            if toVideo {
+                let videoID: String
+                if case .youtube(let id) = current.playbackSource ?? current.source {
+                    videoID = id
+                } else {
+                    let matched = try await MultiSourceResolver.shared.matchToYouTube(track: current)
+                    guard case .youtube(let id) = matched.playbackSource ?? matched.source else {
+                        throw EchoError("Could not resolve video stream for \(current.title)")
+                    }
+                    videoID = id
                 }
-                load(item, ticket: generation)
+                streamObj = try await Catalog.shared.videoStream(for: videoID, title: current.title, artist: current.artist)
+            } else {
+                streamObj = try await Catalog.shared.stream(for: current)
+            }
+            let item = AVPlayerItem(url: streamObj.url)
+            if let dur = streamObj.track.duration ?? current.duration, dur > 0 {
+                duration = dur
+            }
+            load(item, ticket: generation)
+            if savedTime > 0 {
                 engine.seek(to: CMTime(seconds: savedTime, preferredTimescale: 1000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                     Task { @MainActor in
                         if wasPlaying { self?.engine.play() }
                     }
                 }
-            } catch {
-                fail(error.localizedDescription)
+            } else if wasPlaying {
+                engine.play()
             }
+        } catch {
+            fail(error.localizedDescription)
         }
     }
 

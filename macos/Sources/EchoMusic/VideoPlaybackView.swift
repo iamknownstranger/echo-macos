@@ -7,6 +7,7 @@ struct VideoPlaybackView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
+        view.wantsLayer = true
         view.player = player
         view.controlsStyle = .floating
         view.allowsPictureInPicturePlayback = true

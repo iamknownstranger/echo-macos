@@ -305,10 +305,22 @@ struct InspectorView: View {
             }
             if mode == .video {
                 VStack(alignment: .leading, spacing: 12) {
-                    VideoPlaybackView(player: player.playerEngine)
-                        .aspectRatio(16/9, contentMode: .fit)
-                        .cornerRadius(8)
-                        .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 3)
+                    ZStack {
+                        VideoPlaybackView(player: player.playerEngine)
+                            .aspectRatio(16/9, contentMode: .fit)
+                            .cornerRadius(8)
+                            .shadow(color: .black.opacity(0.2), radius: 6, x: 0, y: 3)
+                        if player.loading {
+                            ZStack {
+                                Color.black.opacity(0.6)
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .controlSize(.regular)
+                            }
+                            .aspectRatio(16/9, contentMode: .fit)
+                            .cornerRadius(8)
+                        }
+                    }
                     if let track = player.current {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(track.title).font(.headline).lineLimit(1)
@@ -318,9 +330,14 @@ struct InspectorView: View {
                     Button {
                         Task { await player.switchPlaybackMode(toVideo: !player.isVideoMode) }
                     } label: {
-                        Label(player.isVideoMode ? "Playing High-Res Video" : "Load Video Stream", systemImage: player.isVideoMode ? "video.fill" : "video")
+                        Label(player.isVideoMode ? "Switch to Audio Only" : "Load High-Res Video", systemImage: player.isVideoMode ? "speaker.wave.2" : "video.fill")
                     }
                     .buttonStyle(.bordered)
+                }
+                .task {
+                    if !player.isVideoMode && player.current != nil {
+                        await player.switchPlaybackMode(toVideo: true)
+                    }
                 }
             } else if mode == .queue {
                 if player.queue.isEmpty { Text("Play a song to start your queue.").foregroundStyle(.secondary) }
