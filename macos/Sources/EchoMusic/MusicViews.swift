@@ -33,12 +33,23 @@ struct CoverCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Cover(url: coverURL).frame(width: 162, height: 162).padding(.bottom, 3)
-            Text(title).font(.headline).lineLimit(1)
-            if !subtitle.isEmpty { Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
+        VStack(alignment: .leading, spacing: 6) {
+            Cover(url: coverURL)
+                .frame(width: 162, height: 162)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(width: 162, alignment: .leading)
         }
-        .frame(width: 162, alignment: .leading)
+        .frame(width: 162, alignment: .topLeading)
         .contentShape(Rectangle())
         .threeDTilt()
     }
@@ -794,10 +805,10 @@ struct ChartsView: View {
     }
 
     private func shelfView(_ shelf: Shelf) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(shelf.title).font(.title2.bold()).tracking(-0.5)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
@@ -812,7 +823,9 @@ struct ChartsView: View {
                             .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
                         }
                     }
-                }.padding(.bottom, 5)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 2)
             }
         }
     }
@@ -849,10 +862,10 @@ struct MoodsAndGenresView: View {
     }
 
     private func shelfView(_ shelf: Shelf) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(shelf.title).font(.title2.bold()).tracking(-0.5)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
@@ -867,7 +880,9 @@ struct MoodsAndGenresView: View {
                             .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
                         }
                     }
-                }.padding(.bottom, 5)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 2)
             }
         }
     }
@@ -904,10 +919,10 @@ struct NewReleasesView: View {
     }
 
     private func shelfView(_ shelf: Shelf) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(shelf.title).font(.title2.bold()).tracking(-0.5)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
@@ -922,7 +937,9 @@ struct NewReleasesView: View {
                             .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
                         }
                     }
-                }.padding(.bottom, 5)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 2)
             }
         }
     }

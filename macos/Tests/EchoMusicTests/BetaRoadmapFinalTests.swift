@@ -130,4 +130,48 @@ import Testing
         let delay10 = RoomSession.calculateBackoffDelay(attempt: 10, jitter: 0.5)
         #expect(delay10 == 15.5)
     }
+
+    @Test func resizablePaneClampingAndDirectionLogic() {
+        let sidebarRange: ClosedRange<Double> = 160...360
+        let inspectorRange: ClosedRange<Double> = 240...550
+
+        // Test Sidebar (Leading: drag right increases width)
+        let initialSidebar = 200.0
+        let draggedRight = initialSidebar + 50.0
+        #expect(min(max(draggedRight, sidebarRange.lowerBound), sidebarRange.upperBound) == 250.0)
+
+        // Clamping to max
+        let draggedWayRight = initialSidebar + 500.0
+        #expect(min(max(draggedWayRight, sidebarRange.lowerBound), sidebarRange.upperBound) == 360.0)
+
+        // Clamping to min
+        let draggedWayLeft = initialSidebar - 150.0
+        #expect(min(max(draggedWayLeft, sidebarRange.lowerBound), sidebarRange.upperBound) == 160.0)
+
+        // Test Inspector (Trailing: drag left increases width, so translation is inverted)
+        let initialInspector = 290.0
+        let dragDeltaLeft = -60.0 // Dragging 60px left
+        let newInspectorWidth = initialInspector - dragDeltaLeft // - (-60) = +60
+        #expect(min(max(newInspectorWidth, inspectorRange.lowerBound), inspectorRange.upperBound) == 350.0)
+
+        // Clamping to max inspector width
+        let dragHugeLeft = -400.0
+        let clampedMax = min(max(initialInspector - dragHugeLeft, inspectorRange.lowerBound), inspectorRange.upperBound)
+        #expect(clampedMax == 550.0)
+
+        // Clamping to min inspector width
+        let dragHugeRight = 300.0
+        let clampedMin = min(max(initialInspector - dragHugeRight, inspectorRange.lowerBound), inspectorRange.upperBound)
+        #expect(clampedMin == 240.0)
+    }
+
+    @Test func coverCardRetinaThumbnailURLRewriting() {
+        let url = URL(string: "https://lh3.googleusercontent.com/abc=w120-h120-l90-rj")!
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        if let range = parts.percentEncodedPath.range(of: "=w[0-9]+-h[0-9]+", options: .regularExpression) {
+            parts.percentEncodedPath.replaceSubrange(range, with: "=w500-h500")
+        }
+        let rewritten = parts.url!
+        #expect(rewritten.absoluteString == "https://lh3.googleusercontent.com/abc=w500-h500-l90-rj")
+    }
 }

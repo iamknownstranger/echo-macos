@@ -15,6 +15,8 @@ struct Workspace: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var player: Player
     @EnvironmentObject private var browse: BrowseModel
+    @AppStorage("echo_sidebar_width") private var sidebarWidth: Double = 200.0
+    @AppStorage("echo_inspector_width") private var inspectorWidth: Double = 290.0
     @FocusState private var searchFocused: Bool
     @ViewState private var inspector: Inspector?
     @ViewState private var playlistPrompt = false
@@ -26,9 +28,14 @@ struct Workspace: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 sidebar
-                    .frame(width: 184)
+                    .frame(width: max(160, min(360, sidebarWidth)))
                     .background(.thinMaterial)
-                Divider()
+                ResizableDivider(
+                    width: $sidebarWidth,
+                    range: 160...360,
+                    defaultWidth: 200,
+                    isInspector: false
+                )
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         if case .collection = browse.section {
@@ -61,10 +68,16 @@ struct Workspace: View {
                             .padding(26).frame(maxWidth: .infinity, alignment: .leading)
                     }.id(browse.section)
                 }
+                .frame(minWidth: 420, maxWidth: .infinity)
                 if let inspector {
-                    Divider()
+                    ResizableDivider(
+                        width: $inspectorWidth,
+                        range: 240...550,
+                        defaultWidth: 290,
+                        isInspector: true
+                    )
                     InspectorView(mode: inspector, close: { self.inspector = nil })
-                        .frame(width: 245)
+                        .frame(width: max(240, min(550, inspectorWidth)))
                 }
             }
             Divider()
@@ -282,10 +295,10 @@ struct Workspace: View {
     }
 
     private func shelfView(_ shelf: Shelf) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(shelf.title).font(.title2.bold()).tracking(-0.5).accessibilityAddTraits(.isHeader)
-            ScrollView(.horizontal) {
-                LazyHStack(alignment: .top, spacing: 14) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 16) {
                     ForEach(shelf.entries) { entry in
                         switch entry {
                         case .collection(let item):
@@ -300,8 +313,69 @@ struct Workspace: View {
                             .buttonStyle(.plain).contextMenu { SongMenu(track: track) }
                         }
                     }
-                }.padding(.bottom, 5)
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 2)
             }
         }
+    }
+}
+
+struct ResizableDivider: View {
+    @Binding var width: Double
+    let range: ClosedRange<Double>
+    let defaultWidth: Double
+    let isInspector: Bool
+
+    @ViewState private var dragStartWidth: Double? = nil
+    @ViewState private var isHovered: Bool = false
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(isHovered || dragStartWidth != nil ? 0.9 : 0.45))
+                .frame(width: 1)
+
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 10)
+                .contentShape(Rectangle())
+        }
+        .frame(width: 10)
+        .overlay {
+            if isHovered || dragStartWidth != nil {
+                Capsule()
+                    .fill(Color.echoAccent.opacity(0.85))
+                    .frame(width: 3, height: 26)
+            }
+        }
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragStartWidth == nil {
+                        dragStartWidth = width
+                    }
+                    let translation = isInspector ? -Double(value.translation.width) : Double(value.translation.width)
+                    let newWidth = (dragStartWidth ?? width) + translation
+                    width = min(max(newWidth, range.lowerBound), range.upperBound)
+                }
+                .onEnded { _ in
+                    dragStartWidth = nil
+                }
+        )
+        .onTapGesture(count: 2) {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                width = defaultWidth
+            }
+        }
+        .help("Drag to resize. Double-click to reset width.")
     }
 }
