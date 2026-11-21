@@ -283,6 +283,9 @@ final class Player: ObservableObject {
 
     private func load(_ item: AVPlayerItem, ticket: UUID) {
         Equalizer.shared.configureAudio(for: item)
+        if duration > 0 {
+            item.forwardPlaybackEndTime = CMTime(seconds: duration, preferredTimescale: 1000)
+        }
         engine.replaceCurrentItem(with: item)
         itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor in
@@ -306,6 +309,9 @@ final class Player: ObservableObject {
                         if abs(length - self.duration) <= 2.0 {
                             self.duration = length
                         }
+                    }
+                    if self.duration > 0 {
+                        item.forwardPlaybackEndTime = CMTime(seconds: self.duration, preferredTimescale: 1000)
                     }
                     if let index = self.index, self.queue.indices.contains(index), self.queue[index].duration == nil {
                         self.queue[index].duration = self.duration
