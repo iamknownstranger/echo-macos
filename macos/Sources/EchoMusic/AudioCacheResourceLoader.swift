@@ -116,7 +116,19 @@ final class AudioCacheResourceLoader: NSObject, AVAssetResourceLoaderDelegate, @
         rangeReq.setValue("bytes=\(requestedOffset)-\(endOffset)", forHTTPHeaderField: "Range")
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: rangeReq)
+            var (data, response) = try await URLSession.shared.data(for: rangeReq)
+            if let http = response as? HTTPURLResponse, http.statusCode == 403 {
+                let videoID = key.hasPrefix("yt_") ? String(key.dropFirst(3)) : key
+                if let freshStream = try? await Catalog.shared.stream(for: videoID) {
+                    var retryReq = URLRequest(url: freshStream.url, timeoutInterval: 30)
+                    retryReq.setValue("bytes=\(requestedOffset)-\(endOffset)", forHTTPHeaderField: "Range")
+                    if let (retryData, retryResp) = try? await URLSession.shared.data(for: retryReq) {
+                        data = retryData
+                        response = retryResp
+                    }
+                }
+            }
+
             guard let http = response as? HTTPURLResponse,
                   (http.statusCode == 200 || http.statusCode == 206) else {
                 loadingRequest.finishLoading(with: EchoError("Failed to stream audio range (\(requestedOffset)-\(endOffset))"))

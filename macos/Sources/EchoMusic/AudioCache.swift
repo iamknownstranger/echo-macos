@@ -8,10 +8,16 @@ actor AudioCache {
     private let fileManager = FileManager()
     private var activeDownloads: [String: Task<Void, Never>] = [:]
 
+    struct ByteRange: Codable, Equatable, Sendable {
+        let start: Int64
+        let end: Int64
+    }
+
     struct Meta: Codable, Equatable, Sendable {
         let contentLength: Int64
         let mimeType: String
         let lastAccess: Date
+        var ranges: [ByteRange]
     }
 
     init(directory: URL? = nil) {
@@ -71,8 +77,8 @@ actor AudioCache {
         try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
     }
 
-    func saveMeta(key: String, contentLength: Int64, mimeType: String) {
-        let meta = Meta(contentLength: contentLength, mimeType: mimeType, lastAccess: Date())
+    func saveMeta(key: String, contentLength: Int64, mimeType: String, ranges: [ByteRange] = []) {
+        let meta = Meta(contentLength: contentLength, mimeType: mimeType, lastAccess: Date(), ranges: ranges)
         if let data = try? JSONEncoder().encode(meta) {
             try? data.write(to: metaURL(for: key), options: .atomic)
         }
@@ -86,6 +92,19 @@ actor AudioCache {
         return meta
     }
 
+    func isContiguous(ranges: [ByteRange], expectedLength: Int64) -> Bool {
+        guard !ranges.isEmpty else { return false }
+        let sorted = ranges.sorted { $0.start < $1.start }
+        var currentEnd: Int64 = 0
+        for r in sorted {
+            if r.start > currentEnd {
+                return false
+            }
+            currentEnd = max(currentEnd, r.end)
+        }
+        return currentEnd >= expectedLength
+    }
+
     func writeChunk(key: String, offset: Int64, data: Data) throws {
         let temp = tempURL(for: key)
         if !fileManager.fileExists(atPath: temp.path) {
@@ -95,6 +114,15 @@ actor AudioCache {
         defer { try? handle.close() }
         try handle.seek(toOffset: UInt64(offset))
         try handle.write(contentsOf: data)
+
+        var meta = loadMeta(key: key) ?? Meta(contentLength: 0, mimeType: "audio/mp4", lastAccess: Date(), ranges: [])
+        let newRange = ByteRange(start: offset, end: offset + Int64(data.count))
+        meta.ranges.append(newRange)
+        saveMeta(key: key, contentLength: meta.contentLength, mimeType: meta.mimeType, ranges: meta.ranges)
+
+        if meta.contentLength > 0 && isContiguous(ranges: meta.ranges, expectedLength: meta.contentLength) {
+            try? commit(key: key, expectedLength: meta.contentLength)
+        }
     }
 
     func commit(key: String, expectedLength: Int64) throws {
@@ -103,6 +131,9 @@ actor AudioCache {
         guard fileManager.fileExists(atPath: temp.path) else { return }
         let attrs = try fileManager.attributesOfItem(atPath: temp.path)
         guard let size = attrs[.size] as? Int64, size >= expectedLength else {
+            return
+        }
+        if let meta = loadMeta(key: key), !isContiguous(ranges: meta.ranges, expectedLength: expectedLength) {
             return
         }
         if fileManager.fileExists(atPath: destination.path) {
@@ -136,7 +167,7 @@ actor AudioCache {
                 }
 
                 let mime = http.mimeType ?? "audio/mp4"
-                saveMeta(key: key, contentLength: totalBytes, mimeType: mime)
+                saveMeta(key: key, contentLength: totalBytes, mimeType: mime, ranges: [ByteRange(start: 0, end: totalBytes)])
 
                 let destination = fileURL(for: key)
                 if fileManager.fileExists(atPath: destination.path) {

@@ -67,6 +67,38 @@ import Testing
         #expect(fileData == Data([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]))
     }
 
+    @Test func sparseFileScrubbingDefenseRequiresContiguousByteRange() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let cache = AudioCache(directory: tempDir)
+        let key = "yt_sparse_test"
+
+        await cache.saveMeta(key: key, contentLength: 12, mimeType: "audio/mp4")
+
+        // 1. Write chunk 0..4
+        try await cache.writeChunk(key: key, offset: 0, data: Data([0x00, 0x01, 0x02, 0x03]))
+
+        // 2. User scrubs ahead! Write chunk 8..12 (leaving gap at 4..8)
+        try await cache.writeChunk(key: key, offset: 8, data: Data([0x08, 0x09, 0x0A, 0x0B]))
+
+        // 3. Attempt commit: file size on disk is 12 due to filesystem sparse filling, but ranges have a gap!
+        try await cache.commit(key: key, expectedLength: 12)
+        #expect(await cache.isCached(key: key) == false) // Defended against sparse commit!
+
+        // 4. Now receive the missing chunk 4..8
+        try await cache.writeChunk(key: key, offset: 4, data: Data([0x04, 0x05, 0x06, 0x07]))
+
+        // 5. Ranges are now contiguous: 0..12 -> auto-commits!
+        #expect(await cache.isCached(key: key) == true)
+        let cachedURL = await cache.cachedURL(for: key)
+        #expect(cachedURL != nil)
+        let data = try Data(contentsOf: #require(cachedURL))
+        #expect(data.count == 12)
+        #expect(data == Data([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]))
+    }
+
     @Test func audioCacheLRUPruningEvictsOldestFirst() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)

@@ -302,12 +302,24 @@ final class Player: ObservableObject {
             let customURL = AudioCacheURL.encode(streamURL: url, key: key)
             let asset = AVURLAsset(url: customURL)
             asset.resourceLoader.setDelegate(AudioCacheResourceLoader.shared, queue: AudioCacheResourceLoader.shared.queue)
-            Task {
-                await AudioCache.shared.prefetch(key: key, remoteURL: url, expectedBytes: streamAudioBytes)
-            }
+            prefetchNextQueueItem()
             return AVPlayerItem(asset: asset)
         }
         return AVPlayerItem(url: url)
+    }
+
+    private func prefetchNextQueueItem() {
+        guard let nextIndex, queue.indices.contains(nextIndex) else { return }
+        let nextTrack = queue[nextIndex]
+        Task {
+            let nextSource = nextTrack.playbackSource ?? nextTrack.source
+            guard let nextKey = await AudioCache.shared.cacheKey(for: nextSource),
+                  await !AudioCache.shared.isCached(key: nextKey) else { return }
+            if case .youtube(let nextID) = nextSource,
+               let nextStream = try? await Catalog.shared.stream(for: nextID) {
+                await AudioCache.shared.prefetch(key: nextKey, remoteURL: nextStream.url, expectedBytes: nextStream.audioByteCount)
+            }
+        }
     }
 
     private func load(_ item: AVPlayerItem, ticket: UUID) {
