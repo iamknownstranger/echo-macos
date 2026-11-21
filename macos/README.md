@@ -19,6 +19,14 @@ Use an Apple silicon Mac running macOS 14 or later with a Swift 6 toolchain from
 
 The build script compiles a release executable for arm64, packages the Echo icon and license, signs the bundle with Hardened Runtime entitlements, and generates both `Echo-Music-arm64.zip` and `Echo-Music-arm64.dmg` with a drag-and-drop `/Applications` installer link in `macos/build`. Drag the app into Applications to install. Optional Developer ID signing and notarization can be enabled via `CODESIGN_IDENTITY` and `KEYCHAIN_PROFILE` (or `NOTARY_KEY` / `NOTARY_ISSUER`).
 
+## Automated CI/CD & Semantic Versioned Releases
+
+Every commit pushed to the `main` branch automatically triggers the [GitHub Actions CI/CD pipeline](https://github.com/iamknownstranger/echo-macos/actions/workflows/ci.yml) on Apple Silicon runners (`macos-14`):
+1. **Automated Testing**: Executes the full 43-test unit suite across all 7 subsystems via `./macos/test.sh`.
+2. **Semantic Versioning**: Evaluates commit messages according to conventional commit specifications (`feat:` -> minor bump, `fix:`/other -> patch bump, `BREAKING CHANGE:` -> major bump) using [`bump_version.sh`](./bump_version.sh).
+3. **Hardened Packaging & Gate Verification**: Injects the semantic version into `Info.plist`, builds signed `arm64` application bundle, generates drag-and-drop `.dmg` installer and `.zip` archive, and enforces all 6 release gates via [`verify_release.sh`](./verify_release.sh).
+4. **Automated Publishing**: Generates SHA256 integrity checksums, tags the commit, pushes the tag, and publishes a new GitHub Release with `.dmg`, `.zip`, and `checksums.txt` assets attached.
+
 ## Subdirectories & Boundaries
 - [Sources](./Sources/README.md): Contains Swift package target source implementations (`CZlib` system compression library bridge and `EchoMusic` application subsystem).
 

@@ -21,6 +21,15 @@ install -m755 "$bin" "$app/Contents/MacOS/EchoMusic"
 cp Info.plist "$app/Contents/"
 cp ../LICENSE "$resources/"
 
+if [[ -n "${APP_VERSION:-}" ]]; then
+    echo "==> Injected version: $APP_VERSION"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$app/Contents/Info.plist"
+fi
+if [[ -n "${APP_BUILD:-}" ]]; then
+    echo "==> Injected build number: $APP_BUILD"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" "$app/Contents/Info.plist"
+fi
+
 for size in 16 32 128 256 512; do
     sips -z "$size" "$size" ../assets/Echo-new.png --out "$stage/Echo.iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))

@@ -1,5 +1,10 @@
 # Echo Music for macOS Blueprint
 
+[![CI/CD Pipeline](https://github.com/iamknownstranger/echo-macos/actions/workflows/ci.yml/badge.svg)](https://github.com/iamknownstranger/echo-macos/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/iamknownstranger/echo-macos?label=Release&color=blue)](https://github.com/iamknownstranger/echo-macos/releases)
+[![Platform](https://img.shields.io/badge/Platform-macOS%2014%2B%20(Apple%20Silicon)-black.svg)](https://github.com/iamknownstranger/echo-macos)
+[![License](https://img.shields.io/github/license/iamknownstranger/echo-macos)](./LICENSE)
+
 ## System Overview
 
 Play YouTube Music, import local audio, and host or join a Listen Together room with Echo on Android. The native SwiftUI app runs on Apple silicon Macs with macOS 14 or later.

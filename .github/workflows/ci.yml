@@ -1,0 +1,162 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Semantic version bump type'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      publish_release:
+        description: 'Publish GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run Unit Tests & Verification
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Swift & Xcode Environment
+        run: |
+          sw_vers
+          uname -m
+          xcrun swift --version
+
+      - name: Run Unit Test Suite
+        run: |
+          ./macos/test.sh
+
+  release:
+    name: Build & Publish Release
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (github.event.inputs.publish_release == '' || github.event.inputs.publish_release == 'true')
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git Credentials
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Calculate Semantic Version
+        id: version
+        run: |
+          BUMP_INPUT="${{ github.event.inputs.bump || 'auto' }}"
+          NEXT_TAG="$(./macos/bump_version.sh "$BUMP_INPUT")"
+          VERSION_NUM="${NEXT_TAG#v}"
+          echo "tag=${NEXT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION_NUM}" >> "$GITHUB_OUTPUT"
+          echo "Calculated Next Tag: ${NEXT_TAG} (Version: ${VERSION_NUM})"
+
+      - name: Build Application, DMG & ZIP
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_BUILD: ${{ github.run_number }}
+        run: |
+          ./macos/build.sh
+
+      - name: Verify Release Gates
+        run: |
+          ./macos/verify_release.sh
+
+      - name: Generate Checksums
+        run: |
+          cd macos/build
+          shasum -a 256 "Echo-Music-arm64.dmg" "Echo-Music-arm64.zip" > checksums.txt
+          cat checksums.txt
+
+      - name: Create and Push Git Tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists locally."
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Generate Release Notes
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+
+          echo "## Echo Music ${TAG} (macOS Apple Silicon)" > release_notes.md
+          echo "" >> release_notes.md
+          echo "Production release of Echo Music for macOS, built and verified via automated CI/CD." >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### 📦 Distribution Packages" >> release_notes.md
+          echo "- **Drag-and-Drop Installer (Recommended)**: \`Echo-Music-arm64.dmg\`" >> release_notes.md
+          echo "- **Portable Application Archive**: \`Echo-Music-arm64.zip\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### 🔒 Integrity Checksums (SHA256)" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          cat macos/build/checksums.txt >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### 📝 Changes in this Release" >> release_notes.md
+          if [ -n "$PREV_TAG" ]; then
+            git log "${PREV_TAG}..HEAD" --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md
+          else
+            git log -10 --pretty=format:"* %s ([%h](https://github.com/${{ github.repository }}/commit/%H))" >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release create "$TAG" \
+            "macos/build/Echo-Music-arm64.dmg#Echo Music Installer (.dmg)" \
+            "macos/build/Echo-Music-arm64.zip#Echo Music Portable (.zip)" \
+            "macos/build/checksums.txt#SHA256 Checksums" \
+            --title "Echo Music ${TAG}" \
+            --notes-file release_notes.md \
+            --target "${{ github.sha }}"
+
+      - name: Upload Build Artifacts to Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-music-macos-${{ steps.version.outputs.tag }}
+          path: |
+            macos/build/Echo-Music-arm64.dmg
+            macos/build/Echo-Music-arm64.zip
+            macos/build/checksums.txt
+          if-no-files-found: error
